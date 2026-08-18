@@ -273,43 +273,6 @@ def render_footer_band(wordmark: str, tagline: str, badges: list[dict]) -> None:
 # 카드류
 # ---------------------------------------------------------------------------
 
-def risk_badge_html(level: str) -> str:
-    info = data.RISK_LEVELS[level]
-    return (
-        f'<span class="dj-badge" style="background:{info["bg"]};color:{info["color"]}">'
-        f'{info["emoji"]} {info["label"]}</span>'
-    )
-
-
-def render_risk_result(result) -> None:
-    """services.DiagnosisResult를 카드로 렌더."""
-    info = data.RISK_LEVELS[result.level]
-    st.markdown(
-        f'''
-        <div class="dj-card dj-card-white" style="border-left: 6px solid {info["color"]}">
-            {risk_badge_html(result.level)}
-            <div class="dj-headline" style="font-size:1.3rem; margin-top:0.6rem;">{fmt(result.headline)}</div>
-            <div style="margin-top:0.5rem;">{fmt(result.body)}</div>
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-    if result.evidence:
-        with st.container():
-            st.markdown("**왜 이렇게 봤냐면요**")
-            for ev in result.evidence:
-                st.markdown(
-                    f'''
-                    <div class="dj-card dj-card-white" style="margin-bottom:0.6rem;">
-                        🔎 {fmt(ev["quote"])}<br>
-                        <span style="color: var(--dj-primary-dark); font-weight:600;">→ {fmt(ev["explain"])}</span><br>
-                        <span style="font-size:0.8rem; opacity:0.7;">📄 근거: {fmt(ev["source"])}</span>
-                    </div>
-                    ''',
-                    unsafe_allow_html=True,
-                )
-
-
 def render_fraud_type_card(type_dict: dict, highlight: bool = False, anchor: str | None = None) -> None:
     if anchor:
         st.markdown(f'<div id="{anchor}"></div>', unsafe_allow_html=True)
