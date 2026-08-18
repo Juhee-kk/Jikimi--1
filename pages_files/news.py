@@ -52,9 +52,20 @@ st.markdown(
         font-weight: 700;
         color: var(--dj-primary-dark);
     }
-    .news-new-scam-chip a {
-        color: inherit;
-        text-decoration: none;
+    .news-new-scam-link-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        border-radius: var(--dj-radius-pill);
+        background: var(--dj-primary-dark);
+        padding: 0.24rem 0.9rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: var(--dj-white) !important;
+        text-decoration: none !important;
+    }
+    .news-new-scam-link-btn:hover {
+        opacity: 0.85;
     }
     .news-new-scam-panel {
         border-left: 1px solid var(--dj-border);
@@ -292,31 +303,27 @@ def render_method_card(method: dict, key_prefix: str, index: int) -> None:
 
 
 def render_new_scam_card(method: dict, index: int) -> None:
-    count = method.get("reports_30d", 0)
     flags_html = "".join(f"<li>{fmt(flag)}</li>" for flag in method["red_flags"][:2])
     article_title = method.get("article_title") or "관련 기사"
     article_url = method.get("article_url")
     article_html = (
-        f'<a href="{escape(article_url, quote=True)}" target="_blank" rel="noopener noreferrer">{fmt(article_title)}</a>'
+        f'<a class="news-new-scam-link-btn" href="{escape(article_url, quote=True)}" target="_blank" rel="noopener noreferrer">🔗 {fmt(article_title)}</a>'
         if article_url
-        else fmt(article_title)
+        else f'<span class="news-new-scam-chip">{fmt(article_title)}</span>'
     )
     content_col, action_col = st.columns([32, 1], gap="small")
     with content_col:
         st.markdown(
             f'''
             <div class="news-new-scam-card">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
-                    <span class="dj-badge" style="background:var(--dj-bg); color:var(--dj-primary-dark); font-size:0.68rem; padding:0.2rem 0.7rem; display:inline-block;">{method["tag"]}</span>
-                    <div style="font-size:0.75rem; font-weight:700; opacity:0.72;">최근 1달 {count:,}건</div>
-                </div>
+                <span class="dj-badge" style="background:var(--dj-bg); color:var(--dj-primary-dark); font-size:0.68rem; padding:0.2rem 0.7rem; display:inline-block;">{method["tag"]}</span>
                 <div class="news-new-scam-body">
                     <div>
                         <div class="dj-headline" style="font-size:1.05rem; line-height:1.4;">{fmt(method["title"])}</div>
                         <div style="font-size:0.82rem; opacity:0.76; line-height:1.6; margin-top:0.5rem;">{fmt(method["summary"])}</div>
                         <div class="news-new-scam-meta">
                             <span class="news-new-scam-chip">감지일 {method.get("date", "확인 중")}</span>
-                            <span class="news-new-scam-chip">{article_html}</span>
+                            {article_html}
                         </div>
                     </div>
                     <div class="news-new-scam-panel">
