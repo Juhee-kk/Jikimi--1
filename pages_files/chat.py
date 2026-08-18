@@ -105,44 +105,24 @@ if st.session_state.last_result is not None:
 
 st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-# --- 빠른 시작 칩 (대화 초반에만 노출) ---
-if len(st.session_state.chat_log) <= 1:
-    st.caption("빠르게 시작하기")
-    rows = [data.QUICK_START_CHIPS[i : i + 3] for i in range(0, len(data.QUICK_START_CHIPS), 3)]
-    for row in rows:
-        cols = st.columns(len(row))
-        for col, chip in zip(cols, row):
-            with col:
-                if st.button(chip, key=f"chip_{chip}", use_container_width=True):
-                    handle_user_message(chip)
-                    st.rerun()
-
-# --- 업로드 (캡처 / 통화 녹음) ---
-up1, up2 = st.columns(2)
-with up1:
-    with st.popover("📎 문자·카톡 캡처 올리기", use_container_width=True):
-        st.caption(data.UPLOAD_HINT)
-        capture = st.file_uploader("캡처 업로드", type=["png", "jpg", "jpeg"], key="capture_upload", label_visibility="collapsed")
-        if capture is not None and st.session_state.get("last_capture_name") != capture.name:
-            st.session_state["last_capture_name"] = capture.name
-            st.session_state.chat_log.append({"role": "user", "content": f"📎 캡처 업로드: {capture.name}"})
+# --- 입력창 (캡처/녹음 첨부는 입력창의 파일 아이콘으로) ---
+user_input = st.chat_input(
+    data.CHAT_INPUT_PLACEHOLDER,
+    accept_file="multiple",
+    file_type=["png", "jpg", "jpeg", "mp3", "m4a", "wav"],
+)
+if user_input:
+    for uploaded in user_input.files:
+        if (uploaded.type or "").startswith("image/"):
+            st.session_state.chat_log.append({"role": "user", "content": f"📎 캡처 업로드: {uploaded.name}"})
             st.session_state.chat_log.append(
                 {"role": "assistant", "content": "캡처 확인했어요! 지금은 화면 속 문구를 직접 채팅으로도 같이 알려주시면 더 정확하게 봐드릴 수 있어요."}
             )
-            st.rerun()
-with up2:
-    with st.popover("🎙 통화 녹음 올리기", use_container_width=True):
-        recording = st.file_uploader("녹음 업로드", type=["mp3", "m4a", "wav"], key="recording_upload", label_visibility="collapsed")
-        if recording is not None and st.session_state.get("last_recording_name") != recording.name:
-            st.session_state["last_recording_name"] = recording.name
-            st.session_state.chat_log.append({"role": "user", "content": f"🎙 통화 녹음 업로드: {recording.name}"})
+        else:
+            st.session_state.chat_log.append({"role": "user", "content": f"🎙 통화 녹음 업로드: {uploaded.name}"})
             st.session_state.chat_log.append(
                 {"role": "assistant", "content": "녹음 확인했어요! 통화에서 상대가 뭐라고 했는지 짧게 요약해서 채팅으로 알려주시면 더 정확해요."}
             )
-            st.rerun()
-
-# --- 입력창 ---
-user_input = st.chat_input(data.CHAT_INPUT_PLACEHOLDER)
-if user_input:
-    handle_user_message(user_input)
+    if user_input.text:
+        handle_user_message(user_input.text)
     st.rerun()

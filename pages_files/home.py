@@ -1,11 +1,13 @@
 import streamlit as st
 
 import mock_data as data
-from components import fmt, queue_chat_prefill, render_dark_band, render_footer_band
+from components import fmt, render_dark_band, render_footer_band, render_mascot
 
 # --- 히어로 (풀블리드 코랄) ---
 hero = data.HERO_COPY
 with st.container(key="hero_band"):
+    with st.container(key="hero_mascot_slot"):
+        render_mascot(width=200, name="mascot_alert")
     st.markdown(f'<div class="dj-headline" style="font-size:2.8rem; text-align:center;">{fmt(hero["title"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div style="font-size:1.05rem; margin-top:0.8rem; opacity:0.95; text-align:center;">{fmt(hero["subtitle"])}</div>', unsafe_allow_html=True)
     st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
@@ -45,8 +47,6 @@ for i, (col, card) in enumerate(zip(card_cols, data.ENTRY_CARDS)):
             ''',
             unsafe_allow_html=True,
         )
-        if st.button("물어보기 →", key=f"entry_{card['chip']}", use_container_width=True):
-            queue_chat_prefill(card["chip"])
 
 st.markdown("<div style='height:2.2rem'></div>", unsafe_allow_html=True)
 

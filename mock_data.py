@@ -1,8 +1,14 @@
 """텅장지키미 서비스 카피/목데이터 (docs/copy.md 기준).
 
 여기 있는 문자열은 docs/copy.md에 확정된 카피를 그대로 옮긴 것이며,
-뉴스 기사(NEWS_ARTICLES)만 실제 크롤링 전까지 쓰는 예시용 목데이터입니다.
+요즘 수법 탭의 집계 데이터(SCAM_REPORTS 등)만 실제 크롤링/DB 연동 전까지 쓰는
+예시용 목데이터입니다.
 """
+
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # 0. 홈 — 히어로 / 공감 블록
@@ -81,11 +87,6 @@ TRUST_BADGES = [
     {"icon": "🛟", "label": "끝까지 함께", "desc": "대응 가이드까지 같이 봐요"},
 ]
 
-PRIVACY_NOTE = (
-    "🔒 대화 내용은 사기 판단에만 써요. 주민번호·비밀번호·인증번호는 절대 묻지 않아요.\n"
-    "저장하고 싶을 때만 로그인하면 돼요."
-)
-
 DISCLAIMER_TEXT = (
     "텅장지키미의 진단은 참고용이에요. 최종 확인과 조치는 거래 은행, 경찰(112), "
     "금융감독원(1332)을 통해 진행해 주세요.\n"
@@ -108,26 +109,13 @@ FOOTER_TEXT = (
 
 CHAT_OPENING_MESSAGE = (
     "안녕하세요, 텅장지키미예요.\n\n"
-    "무슨 일 있었는지 편하게 말해주세요. 문장으로 정리 안 하셔도 되고, 캡처본을 그냥 올리셔도 돼요.\n"
-    "**바로 신고하거나 혼내지 않아요.** 대화내용을 보고 뭘 해야할지 상담해요.\n\n"
-    "아, 혹시 **이미 송금하셨다면 그것부터 알려주세요.** 시간이 중요하거든요."
+    "무슨 일 있었는지 편하게 말해주세요. + 버튼을 눌러 캡처본이나 녹음본을 올리셔도 돼요.\n"
+    "**바로 신고하거나 혼내지 않아요.** 저랑 같이 상담을 시작해볼까요? \n\n"
 )
 
-QUICK_START_CHIPS = [
-    " 입금하기 직전이에요",
-    " 이상한 문자를 받았어요",
-    " 기관이라면서 전화가 왔어요",
-    " 온라인에서 만난 사람이 돈을 요구해요",
-    " 투자 리딩방에 들어갔어요",
-    " 중고거래 중이에요",
-    " 부업/알바 제안을 받았어요",
-    " 이미 돈을 보냈어요",
-    " 제 얘기가 아니라 친구 얘기예요",
-]
+
 
 CHAT_INPUT_PLACEHOLDER = "예) 아까 검찰이라면서 전화 왔는데 안전계좌로 옮기라고 해요…"
-
-UPLOAD_HINT = "캡처만 올려도 돼요. 발신번호랑 링크, 요구한 내용만 뽑아서 볼게요."
 
 LOADING_MESSAGES = [
     "최근 사례랑 맞춰보는 중이에요…",
@@ -197,27 +185,12 @@ RISK_LEVELS = {
     },
 }
 
-UNCERTAIN_MESSAGE = (
-    "솔직히 말할게요. 지금 정보로는 확실하게 판단하기 어려워요.\n"
-    "근데 애매할 땐 **일단 멈추는 게 항상 이득**이에요. 잃을 게 없거든요.\n"
-    "거래를 잠깐 보류하시고, 은행이나 1332에 한 번만 확인해보실래요? "
-    "뭐라고 말하면 되는지 대본 만들어드릴게요."
-)
-
 CARE_MESSAGE = (
     "이런 거 당하는 거, 멍청해서가 아니에요.\n"
     "저쪽은 이걸 **직업으로** 하는 사람들이고, 하루에 수백 명한테 똑같이 걸어요. "
     "걸리는 게 이상한 게 아니에요.\n"
     "지금 여기 오신 것만으로 이미 잘하고 계신 거예요. 하나씩 해봐요."
 )
-
-MICRO_COPY = {
-    "empty_input": '뭐라도 좋아요. "이거 사기야?" 한 마디면 시작할 수 있어요.',
-    "error": "앗, 제가 잠깐 버벅였어요. 한 번만 다시 보내주실래요?",
-    "resume": "지난번 그 얘기 이어서 할까요?",
-    "session_end": "오늘 잘 대처하셨어요. 또 이상한 거 오면 바로 오세요. 언제든 열려 있어요.",
-    "login_prompt": "저장하려면 로그인이 필요해요. 나중에 진행 상황 확인할 때 편하거든요.",
-}
 
 # ---------------------------------------------------------------------------
 # 3. 사기 유형 (채팅 키워드 매칭 + 대응 가이드 카드 + 뉴스 필터 공용)
@@ -387,96 +360,7 @@ FRAUD_TYPE_BY_ID = {t["id"]: t for t in FRAUD_TYPES}
 DAMAGE_KEYWORDS = ["이미 보냈", "이미 송금", "벌써 보냈", "돈을 보냈", "송금했어", "입금했어"]
 
 # ---------------------------------------------------------------------------
-# 4. 대응 가이드 페이지
-# ---------------------------------------------------------------------------
-
-GUIDE_URGENT_BANNER = {
-    "title": "🚨 방금 송금하셨어요?",
-    "body": (
-        '다른 거 다 제쳐두고 거래 은행 고객센터에 전화해서 "지급정지 요청합니다" 부터 하세요.\n'
-        "상대 계좌에 돈이 남아 있어야 막을 수 있어서, 빠를수록 좋아요."
-    ),
-}
-
-TIMELINE_STEPS = [
-    {
-        "time": "0~5분",
-        "label": "🔴 무조건 이것부터",
-        "task": "거래 은행 고객센터 → **지급정지 요청**\n(계좌가 여러 개면 돈 나간 은행 먼저)",
-        "why": "상대가 돈을 빼가기 전에 계좌를 얼려야 해요. 이게 전부라고 봐도 돼요",
-        "color": "#DC2626",
-    },
-    {
-        "time": "5~30분",
-        "label": "🟠 피해 확산 막기",
-        "task": "112 신고 접수\n악성 앱·문자 **삭제하지 말고** 캡처 먼저\n추가 연락 차단",
-        "why": "증거가 있어야 나중 절차가 쉬워요. 지우면 복구가 어려워요",
-        "color": "#EA580C",
-    },
-    {
-        "time": "~2시간",
-        "label": "🟡 내 계정 잠그기",
-        "task": "카드 정지·재발급, 이체한도 하향\n인증서 폐기 후 재발급\n휴대폰 비번·주요 계정 비번 변경",
-        "why": "계좌 하나만 털린 게 아닐 수 있어요",
-        "color": "#CA8A04",
-    },
-    {
-        "time": "당일 24시간",
-        "label": "🟢 서류 접수",
-        "task": "은행 방문 또는 앱으로 **피해구제 신청서** 제출\n경찰 신고 접수증 확보",
-        "why": "지급정지는 신청서까지 내야 유지돼요",
-        "color": "#16A34A",
-    },
-    {
-        "time": "1~3일",
-        "label": "🔵 2차 피해 점검",
-        "task": "내 명의 계좌 전체 조회\n내 명의 휴대폰 개통 이력 확인\n내 명의 대출 실행 여부 확인",
-        "why": "개인정보가 넘어갔으면 다른 데서 터져요",
-        "color": "#2563EB",
-    },
-    {
-        "time": "이후",
-        "label": "⚪ 재발 방지",
-        "task": "여신거래 안심차단 신청\n지연이체·1일 한도 축소 설정\n보이스피싱 보험 확인",
-        "why": "한 번 당한 번호·계정은 리스트에 올라가서 또 와요",
-        "color": "#6B7280",
-    },
-]
-
-TIMELINE_FOOTER = "다 못 해도 괜찮아요. **1번(지급정지)만 하면 절반은 한 거예요.**"
-
-AGENCY_CONTACTS = [
-    {"name": "경찰청 (긴급신고)", "phone": "112", "site": None, "when": "피해 발생 직후, 모든 사기 유형", "priority": True},
-    {"name": "금융감독원", "phone": "1332", "site": "fss.or.kr", "when": "사기 여부 상담, 피해 절차 안내", "priority": True},
-    {"name": "보이스피싱 통합신고대응센터", "phone": "1566-1188", "site": None, "when": "보이스피싱 통합 신고·상담", "priority": True},
-    {"name": "KISA 불법스팸대응센터", "phone": "118", "site": "spam.kisa.or.kr", "when": "스미싱·악성앱·개인정보 유출", "priority": True},
-    {"name": "거래 은행 고객센터", "phone": "은행별", "site": "각 은행 앱", "when": "지급정지 (제일 급한 것)", "priority": True},
-    {"name": "경찰청 사이버범죄 신고시스템 (ECRM)", "phone": None, "site": "ecrm.police.go.kr", "when": "중고거래·온라인 사기 온라인 접수", "priority": False},
-    {"name": "금융소비자 포털 파인", "phone": None, "site": "fine.fss.or.kr", "when": "제도권 금융사 조회, 각종 조회 서비스", "priority": False},
-    {"name": "계좌정보통합관리서비스", "phone": None, "site": "payinfo.or.kr", "when": "내 명의 계좌 전체 조회·일괄 해지", "priority": False},
-    {"name": "명의도용방지서비스 (엠세이퍼)", "phone": None, "site": "msafer.or.kr", "when": "내 명의 휴대폰 개통 이력 확인·가입 차단", "priority": False},
-    {"name": "더치트", "phone": None, "site": "thecheat.co.kr", "when": "사기 계좌·번호 조회 및 사례 등록", "priority": False},
-    {"name": "한국소비자원", "phone": "1372", "site": "kca.go.kr", "when": "쇼핑몰·계약 관련 소비자 피해", "priority": False},
-]
-
-AGENCY_NOTES = [
-    "📌 여신거래 안심차단: 내 명의로 대출이 나가는 걸 아예 막아두는 제도예요. 거래 은행 앱이나 창구에서 신청할 수 있어요.",
-    "📌 개인정보 노출자 사고예방 시스템: 신분증이 유출됐다면 등록해두세요. 신규 계좌 개설·대출에 제동이 걸려요.",
-]
-
-AGENCY_FOOTER = "어디에 연락해야 할지 모르겠으면 **1332(금감원)** 로 거세요. 상황 듣고 맞는 곳으로 연결해줘요."
-
-PREVENTION_SETTINGS = [
-    {"setting": "지연이체 서비스", "benefit": "보낸 돈이 일정 시간 뒤에 도착해요. 그 사이에 취소 가능", "where": "은행 앱"},
-    {"setting": "1일 이체한도 낮추기", "benefit": "털려도 피해 금액이 줄어요", "where": "은행 앱"},
-    {"setting": "여신거래 안심차단", "benefit": "내 명의 대출을 원천 차단", "where": "은행 앱·창구"},
-    {"setting": "입금계좌 지정 서비스", "benefit": "지정한 계좌로만 큰 금액 이체 가능", "where": "은행 앱"},
-    {"setting": "해외 IP 차단", "benefit": "해외에서의 접속을 막아요", "where": "은행 앱"},
-    {"setting": "카드 해외결제 차단", "benefit": "안 쓰면 꺼두는 게 이득", "where": "카드사 앱"},
-]
-
-# ---------------------------------------------------------------------------
-# 5. 전화 대본
+# 4. 전화 대본
 # ---------------------------------------------------------------------------
 
 PHONE_SCRIPT_INTRO = (
@@ -485,76 +369,8 @@ PHONE_SCRIPT_INTRO = (
 )
 
 # ---------------------------------------------------------------------------
-# 6. 최근 사기 수법 (뉴스) 페이지 — 데모용 예시 카드
+# 5. 최근 사기 수법 (뉴스) 페이지
 # ---------------------------------------------------------------------------
-
-NEWS_FILTER_CHIPS = [
-    "전체", "🆕 이번 주 신종", "📞 보이스피싱", "📩 스미싱", "💗 로맨스스캠",
-    "📈 투자·코인", "🛒 중고거래", "💼 부업·알바", "🎓 20대 표적",
-]
-
-NEWS_ARTICLES = [
-    {
-        "icon": "📞",
-        "tag": "📞 보이스피싱",
-        "title": "해외결제 승인 문자로 접근하는 신종 스미싱",
-        "summary": "해외결제 완료 문자를 보내 놀라게 한 뒤, 문자에 적힌 '고객센터' 번호로 걸면 안전계좌 이체를 유도해요.",
-        "red_flags": ["문자 속 번호로 직접 전화하라는 유도", "\"본인 아니면 즉시 신고\" 같은 다급한 문구"],
-        "how_to_avoid": "문자 속 번호로 걸지 말고, 카드 뒷면의 공식 고객센터로 직접 확인하세요.",
-        "source": "금융감독원 보도자료(예시)",
-        "date": "2026.08.12",
-    },
-    {
-        "icon": "📈",
-        "tag": "📈 투자·코인",
-        "title": "출금 직전에 세금 명목 추가 입금을 요구하는 리딩방",
-        "summary": "소액 출금은 잘 되다가 금액이 커지면 '세금·수수료'를 먼저 넣으라며 출금을 막는 패턴이 계속 보고되고 있어요.",
-        "red_flags": ["원금 보장 문구", "출금하려면 선입금이 필요하다는 안내"],
-        "how_to_avoid": "출금이 막히는 순간이 사기 확정 신호예요. 추가 입금 대신 바로 신고하세요.",
-        "source": "경찰청 사이버수사국(예시)",
-        "date": "2026.08.11",
-    },
-    {
-        "icon": "💗",
-        "tag": "💗 로맨스스캠",
-        "title": "해외 근무 중이라며 국제 소포 통관비를 요구하는 수법",
-        "summary": "데이팅 앱에서 몇 주간 다정하게 대화하다, 해외 소포·통관비 명목으로 소액부터 요구를 시작해요.",
-        "red_flags": ["영상통화를 계속 미룸", "\"너한테만 얘기하는 건데\"로 시작하는 투자 권유"],
-        "how_to_avoid": "직접 만나거나 실시간 영상통화가 안 되면 송금 요청은 일단 거절하세요.",
-        "source": "금융감독원 소비자경보(예시)",
-        "date": "2026.08.10",
-    },
-    {
-        "icon": "💼",
-        "tag": "🎓 20대 표적",
-        "title": "간단 미션 알바로 접근해 통장을 요구하는 조직",
-        "summary": "체크카드나 통장을 잠깐 빌려주면 수수료를 준다는 제안이 SNS 광고로 늘고 있어요. 응하면 공범 처리될 수 있어요.",
-        "red_flags": ["통장·체크카드를 보내달라는 요청", "근로계약서 없이 신분증부터 요구"],
-        "how_to_avoid": "통장 대여는 절대 응하지 말고, 이미 넘겼다면 최대한 빨리 자진 신고하세요.",
-        "source": "금융감독원 보도자료(예시)",
-        "date": "2026.08.09",
-    },
-    {
-        "icon": "🛒",
-        "tag": "🛒 중고거래",
-        "title": "예금주 이름을 슬쩍 바꿔 부르는 중고거래 사기",
-        "summary": "시세보다 싸게 올리고 거래를 서두르며, 계좌 예금주 이름이 대화 중 이름과 미묘하게 다른 사례가 늘고 있어요.",
-        "red_flags": ["예금주 이름이 대화 중 이름과 다름", "플랫폼 밖(카톡·문자)으로 유도"],
-        "how_to_avoid": "입금 전 계좌·번호를 조회하고, 가능하면 안전결제만 이용하세요.",
-        "source": "더치트 이용자 제보(예시)",
-        "date": "2026.08.08",
-    },
-    {
-        "icon": "💬",
-        "tag": "💬 메신저 지인사칭",
-        "title": "\"폰 액정 깨져서 컴퓨터로 한다\"는 지인 사칭 대화",
-        "summary": "가족·친구 프로필로 카톡이 와서 액정이 깨졌다며 컴퓨터로 대화 중이라고 하고, 급전을 대신 보내달라고 해요.",
-        "red_flags": ["지금 통화가 안 됨 (전화를 계속 피함)", "잠깐만 대신 송금해줄 수 있어?"],
-        "how_to_avoid": "메신저로 오는 송금 요청은 반드시 전화로 본인 확인 후 응하세요.",
-        "source": "경찰청 사이버범죄 신고시스템(예시)",
-        "date": "2026.08.07",
-    },
-]
 
 NEWS_EMPTY_STATES = {
     "no_new": "오늘은 새로 올라온 게 없네요. 조용한 게 좋은 거예요 😌",
@@ -567,8 +383,103 @@ NEWS_WEEKLY_SUMMARY = {
     "phrase": "출금하려면 세금을 먼저 넣으셔야 합니다",
 }
 
+NEWS_MONTHLY_SUMMARY = {
+    "month_label": "2026년 8월",
+    "total_count_label": "9,353건",
+    "total_amount_label": "4,936억원",
+    "stats": [
+        {"value": "9,353건", "change": "전월 대비 -35.3%", "label": "이번 달 발생"},
+        {"value": "4,936억원", "change": None, "label": "이번 달 피해액"},
+        {"value": "52%", "change": None, "label": "기관사칭 피해자 중 20·30대"},
+        {"value": "7,438만원", "change": None, "label": "기관사칭 1건당 평균"},
+    ],
+}
+
+SCAM_REPORTS = [
+    {"date": "2026-08-18", "fraud_type_id": "voice_phishing", "count": 44},
+    {"date": "2026-08-12", "fraud_type_id": "voice_phishing", "count": 51},
+    {"date": "2026-07-25", "fraud_type_id": "voice_phishing", "count": 33},
+    {"date": "2026-08-17", "fraud_type_id": "loan_scam", "count": 28},
+    {"date": "2026-08-09", "fraud_type_id": "loan_scam", "count": 36},
+    {"date": "2026-07-27", "fraud_type_id": "loan_scam", "count": 30},
+    {"date": "2026-08-18", "fraud_type_id": "smishing", "count": 62},
+    {"date": "2026-08-11", "fraud_type_id": "smishing", "count": 71},
+    {"date": "2026-07-23", "fraud_type_id": "smishing", "count": 43},
+    {"date": "2026-08-15", "fraud_type_id": "messenger_impersonation", "count": 31},
+    {"date": "2026-08-04", "fraud_type_id": "messenger_impersonation", "count": 29},
+    {"date": "2026-07-29", "fraud_type_id": "messenger_impersonation", "count": 23},
+    {"date": "2026-08-14", "fraud_type_id": "romance_scam", "count": 21},
+    {"date": "2026-08-03", "fraud_type_id": "romance_scam", "count": 25},
+    {"date": "2026-07-26", "fraud_type_id": "romance_scam", "count": 15},
+    {"date": "2026-08-17", "fraud_type_id": "investment_scam", "count": 47},
+    {"date": "2026-08-07", "fraud_type_id": "investment_scam", "count": 58},
+    {"date": "2026-07-24", "fraud_type_id": "investment_scam", "count": 37},
+    {"date": "2026-08-16", "fraud_type_id": "secondhand_scam", "count": 43},
+    {"date": "2026-08-08", "fraud_type_id": "secondhand_scam", "count": 45},
+    {"date": "2026-07-28", "fraud_type_id": "secondhand_scam", "count": 31},
+    {"date": "2026-08-13", "fraud_type_id": "part_time_scam", "count": 24},
+    {"date": "2026-08-05", "fraud_type_id": "part_time_scam", "count": 27},
+    {"date": "2026-07-30", "fraud_type_id": "part_time_scam", "count": 21},
+    {"date": "2026-08-13", "fraud_type_id": "concert_ticket_takeover", "count": 10},
+    {"date": "2026-08-06", "fraud_type_id": "concert_ticket_takeover", "count": 8},
+    {"date": "2026-08-12", "fraud_type_id": "ai_voice_impersonation", "count": 6},
+    {"date": "2026-08-02", "fraud_type_id": "ai_voice_impersonation", "count": 5},
+]
+
+NEW_SCAM_PATTERNS = [
+    {
+        "id": "concert_ticket_takeover",
+        "tag": "신종 감지",
+        "title": "콘서트 양도 인증을 가장한 예매 계정 탈취",
+        "summary": "티켓 양도 대화 중 예매 내역 확인이 필요하다며 로그인 링크를 보내고, 계정과 결제 정보를 가져가는 패턴이에요.",
+        "red_flags": ["공식 앱 밖의 로그인 링크", "인증번호·비밀번호 재입력 요구"],
+        "how_to_avoid": "양도 거래는 공식 플랫폼 안에서만 진행하고, 상대가 보낸 로그인 링크에는 들어가지 마세요.",
+        "article_title": "관련 기사 확인 예정",
+        "article_url": "",
+        "date": "2026.08.13",
+    },
+    {
+        "id": "ai_voice_impersonation",
+        "tag": "신종 감지",
+        "title": "AI 음성으로 지인 목소리를 흉내 내는 급전 요청",
+        "summary": "짧은 음성 통화나 음성 메시지로 지인처럼 말하며 급히 송금을 부탁하는 사례를 가정한 데이터예요.",
+        "red_flags": ["통화가 짧고 다시 걸면 받지 않음", "평소와 다른 계좌로 송금 요청"],
+        "how_to_avoid": "가족·친구끼리만 아는 질문으로 확인하고, 기존 연락처로 다시 전화해 본인 여부를 확인하세요.",
+        "article_title": "관련 기사 확인 예정",
+        "article_url": "",
+        "date": "2026.08.12",
+    },
+]
+
+
+def _parse_scam_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def get_recent_report_counts(days: int = 30, today: date | None = None) -> dict[str, int]:
+    """최근 N일 동안 fraud_type_id별 보고 건수를 집계한다."""
+    today = today or date.today()
+    start_date = today - timedelta(days=days - 1)
+    counts: defaultdict[str, int] = defaultdict(int)
+
+    for report in SCAM_REPORTS:
+        reported_at = _parse_scam_date(report["date"])
+        if start_date <= reported_at <= today:
+            counts[report["fraud_type_id"]] += report["count"]
+
+    return dict(counts)
+
+
+def get_newly_detected_scams(days: int = 30, today: date | None = None) -> list[dict]:
+    """신종 감지 수법 목록에 최근 보고 건수를 붙여 반환한다."""
+    counts = get_recent_report_counts(days=days, today=today)
+    return [
+        {**pattern, "reports_30d": counts.get(pattern["id"], 0)}
+        for pattern in NEW_SCAM_PATTERNS
+    ]
+
 # ---------------------------------------------------------------------------
-# 7. 금융사기 상식 퀴즈
+# 6. 금융사기 상식 퀴즈
 # ---------------------------------------------------------------------------
 
 QUIZ_QUESTIONS = [
@@ -643,17 +554,3 @@ QUIZ_RESULT_BANDS = [
 ]
 
 QUIZ_SHARE_LABEL = "친구한테도 보내기 (은근히 잘 당해요)"
-
-# ---------------------------------------------------------------------------
-# 8. 내 기록 페이지
-# ---------------------------------------------------------------------------
-
-KEEPER_TIPS = [
-    '"공공기관은 절대로 카카오톡으로 금융 정보를 요구하지 않아요!"',
-    '"안전계좌라는 건 세상에 없는 말이에요."',
-    '"신고 이력이 없다고 안전한 게 아니에요."',
-    '"정상 금융회사는 어떤 명목으로도 선입금을 요구하지 않아요."',
-    '"애매할 땐 일단 멈추는 게 항상 이득이에요."',
-]
-
-HISTORY_EMPTY_STATE = "아직 저장된 상담이 없어요. 상황 진단에서 대화하고 '이 상담 저장하기'를 눌러보세요."

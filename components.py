@@ -137,14 +137,25 @@ def inject_custom_css() -> None:
             filter: drop-shadow(0 14px 22px rgba(31, 61, 52, 0.35));
         }
 
+        /* 히어로 마스코트 — 가운데 문구는 그대로 두고, 빈 공간에만 얹히는 오버레이 */
+        div[class*="st-key-hero_mascot_slot"] {
+            position: absolute;
+            left: clamp(0.5rem, 4vw, 4rem);
+            top: 50%;
+            transform: translateY(-50%);
+            width: fit-content !important;
+            z-index: 1;
+            pointer-events: none;
+        }
+        @media (max-width: 900px) {
+            div[class*="st-key-hero_mascot_slot"] { display: none; }
+        }
+
         /* 3단계 (딥그린) */
         .dj-full-bleed.dj-dark { background: var(--dj-primary-dark); color: var(--dj-white); margin-top: 2rem; }
 
         /* 푸터 밴드 (코랄, 상단 라운드) */
         .dj-full-bleed.dj-footer-band { background: var(--dj-primary); color: var(--dj-white); border-radius: 56px 56px 0 0; margin-top: 2.5rem; padding-top: 3rem; }
-
-        /* 이럴 때 열어보세요 카드의 "물어보기 →" 버튼 글씨도 카드 텍스트와 동일하게 흰색 */
-        div[class*="st-key-entry_card_"] .stButton > button { color: var(--dj-text); }
 
         /* 요즘 수법 — 카드뉴스 */
         div[class*="st-key-news_card_"] { display: flex; flex-direction: column; height: 100%; margin-bottom: 1rem; }
@@ -438,23 +449,34 @@ def _cutout_white_bg(path_str: str, mtime: float) -> bytes:
     return buf.getvalue()
 
 
-def render_mascot(width: int = 260) -> None:
+def _has_real_transparency(path_str: str) -> bool:
+    """이미 알파 채널로 투명 처리된 PNG인지 확인 (흰/회색 배경을 굽지 않고 내보낸 경우)."""
+    img = Image.open(path_str)
+    if img.mode != "RGBA":
+        return False
+    return img.getextrema()[3][0] < 250
+
+
+def render_mascot(width: int = 260, name: str = "mascot") -> None:
     """assets/ 폴더의 마스코트 파일을 보여줌.
 
-    우선순위: png (투명 배경 확정, 흰 배경이면 자동 투명 처리) →
+    우선순위: png (이미 투명 배경이면 그대로, 흰/회색조 배경이 구워져 있으면 자동 투명 처리) →
     gif/webp (움직이는 캐릭터, 투명 배경 네이티브 지원) →
     mp4 (일반 <video> 태그라 투명 배경은 지원 안 됨, 최후의 수단) → 없으면 이모지로 대체.
     """
     assets_dir = Path(__file__).parent / "assets"
-    png_path = assets_dir / "mascot.png"
-    gif_path = assets_dir / "mascot.gif"
-    webp_path = assets_dir / "mascot.webp"
-    video_path = assets_dir / "mascot.mp4"
+    png_path = assets_dir / f"{name}.png"
+    gif_path = assets_dir / f"{name}.gif"
+    webp_path = assets_dir / f"{name}.webp"
+    video_path = assets_dir / f"{name}.mp4"
 
-    with st.container(key="mascot_frame"):
+    with st.container(key=f"mascot_frame_{name}"):
         if png_path.exists():
-            cutout = _cutout_white_bg(str(png_path), png_path.stat().st_mtime)
-            st.image(cutout, width=width)
+            if _has_real_transparency(str(png_path)):
+                st.image(str(png_path), width=width)
+            else:
+                cutout = _cutout_white_bg(str(png_path), png_path.stat().st_mtime)
+                st.image(cutout, width=width)
         elif gif_path.exists():
             st.image(str(gif_path), width=width)
         elif webp_path.exists():
