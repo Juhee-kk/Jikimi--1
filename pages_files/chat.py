@@ -1,46 +1,121 @@
-import random
-
+import requests
 import streamlit as st
 
 import mock_data as data
 import services
-from components import fmt, render_chat_message, render_risk_result
+from components import render_chat_message
+
+TOOL_BUTTONS = [
+    ("call_script", "📞 신고 전화 대본"),
+    ("report", "📋 피해 상황 요약 리포트"),
+    ("checklist", "🗂 증거 보존 체크리스트"),
+]
+
+CONNECTION_ERROR_MESSAGE = "지금 분석 서버 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요."
+
 
 # --- 세션 초기화 ---
-if "chat_log" not in st.session_state:
-    st.session_state.chat_log = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
-if "last_result" not in st.session_state:
-    st.session_state.last_result = None
-if "show_phone_script" not in st.session_state:
-    st.session_state.show_phone_script = False
-if "show_report" not in st.session_state:
-    st.session_state.show_report = False
+def _reset_state() -> None:
+    st.session_state.chat_phase = "suspicion"
+    st.session_state.chat_messages = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
+    st.session_state.ask_count = {"suspicion": 0, "damage_stage": 0}
+    st.session_state.damage_stage = None
+    st.session_state.signals = []
+    st.session_state.tool_outputs = {}
 
 
-def _plain_history() -> list[dict]:
-    return [{"role": e["role"], "content": e["content"]} for e in st.session_state.chat_log if "content" in e]
+if "chat_phase" not in st.session_state:
+    _reset_state()
+
+
+def _history() -> list[dict]:
+    return [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_messages]
+
+
+def append(role: str, content: str) -> None:
+    st.session_state.chat_messages.append({"role": role, "content": content})
+
+
+def reply(content: str) -> None:
+    append("assistant", content)
+
+
+def finish_with_guide(stage: str) -> None:
+    st.session_state.damage_stage = stage
+    st.session_state.chat_phase = "guided"
+    reply(services.make_guide(stage, _history()))
 
 
 def handle_user_message(text: str) -> None:
     text = text.strip()
     if not text:
         return
-    history_before = _plain_history()
-    st.session_state.chat_log.append({"role": "user", "content": text})
+    append("user", text)
 
     if services.contains_sensitive_info(text):
-        st.session_state.chat_log.append({"role": "assistant", "content": data.SENSITIVE_INFO_WARNING})
+        reply(data.SENSITIVE_INFO_WARNING)
         return
 
-    with st.spinner(random.choice(data.LOADING_MESSAGES)):
-        result = services.diagnose(text, history_before)
+    phase = st.session_state.chat_phase
+    try:
+        if phase == "suspicion":
+            r = services.classify_suspicion(_history())
+            if r["label"] == "근거부족" and st.session_state.ask_count["suspicion"] < 2:
+                st.session_state.ask_count["suspicion"] += 1
+                reply(r["follow_up"])
+            elif r["label"] == "낮음":
+                reply(
+                    "현재 내용만으로는 사기 가능성이 낮아 보여요. 다만 앞으로 "
+                    "개인정보·입금·링크 클릭을 요구받으면 꼭 다시 확인해 주세요!"
+                )
+            else:  # 의심 (근거부족 2회 초과 시에도 의심으로 진행: 안전 우선)
+                st.session_state.signals += r.get("signals", [])
+                st.session_state.chat_phase = "damage_stage"
+                s = services.classify_damage_stage(_history())
+                if s["stage"] == "근거부족":
+                    st.session_state.ask_count["damage_stage"] += 1
+                    reply(
+                        "몇 가지 위험 신호가 보여요. 정확한 대응을 안내해 드리기 위해 "
+                        "하나만 확인할게요.\n\n" + s["follow_up"]
+                    )
+                else:
+                    finish_with_guide(s["stage"])
 
-    st.session_state.chat_log.append({"role": "assistant", "result": result})
-    st.session_state.last_result = result
-    st.session_state.show_phone_script = False
-    st.session_state.show_report = False
-    if result.level == "damage":
-        st.session_state.chat_log.append({"role": "assistant", "content": data.CARE_MESSAGE})
+        elif phase == "damage_stage":
+            s = services.classify_damage_stage(_history())
+            if s["stage"] == "근거부족" and st.session_state.ask_count["damage_stage"] < 2:
+                st.session_state.ask_count["damage_stage"] += 1
+                reply(s["follow_up"])
+            else:
+                stage = s["stage"] if s["stage"] != "근거부족" else "접촉초기"
+                finish_with_guide(stage)
+
+        elif phase == "guided":
+            reply("추가로 궁금한 점이 있으면 편하게 말씀해 주세요. 새로운 상담은 위의 '새 상담' 버튼을 눌러주세요.")
+    except requests.exceptions.RequestException:
+        reply(CONNECTION_ERROR_MESSAGE)
+
+
+IMAGE_EXT = ("png", "jpg", "jpeg")
+AUDIO_EXT = ("mp3", "m4a", "wav")
+
+
+def handle_uploaded_files(files) -> None:
+    """채팅바에서 첨부한 캡처·녹음 처리."""
+    for f in files:
+        ext = f.name.rsplit(".", 1)[-1].lower()
+        if ext in IMAGE_EXT:
+            icon, kind, reply_text = "📎", "캡처", (
+                "캡처 확인했어요. 화면 속 문구를 채팅으로도 같이 알려주시면 더 정확하게 봐드릴 수 있어요."
+            )
+        elif ext in AUDIO_EXT:
+            icon, kind, reply_text = "🎙", "통화 녹음", (
+                "녹음 확인했어요. 통화에서 상대가 뭐라고 했는지 짧게 요약해 주시면 더 정확해요."
+            )
+        else:
+            icon, kind, reply_text = "📄", "파일", "파일 확인했어요."
+        append("user", f"{icon} {kind} 첨부: {f.name}")
+        reply(reply_text)
 
 
 # --- 헤더 ---
@@ -49,10 +124,7 @@ with header_col:
     st.markdown('<div class="dj-headline" style="font-size:1.8rem;">💬 상황 진단</div>', unsafe_allow_html=True)
 with reset_col:
     if st.button("🔄 새 상담", use_container_width=True):
-        st.session_state.chat_log = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
-        st.session_state.last_result = None
-        st.session_state.show_phone_script = False
-        st.session_state.show_report = False
+        _reset_state()
         st.rerun()
 
 # --- 홈/뉴스에서 넘어온 프리필 처리 ---
@@ -61,44 +133,28 @@ if st.session_state.get("prefill_chip"):
     handle_user_message(prefill)
 
 # --- 대화 내역 렌더 ---
-for entry in st.session_state.chat_log:
-    if "result" in entry:
-        render_risk_result(entry["result"])
-        if entry["result"].followup_question:
-            render_chat_message("assistant", entry["result"].followup_question)
-    else:
-        render_chat_message(entry["role"], entry["content"])
+for entry in st.session_state.chat_messages:
+    render_chat_message(entry["role"], entry["content"])
 
-# --- 결과 액션 버튼 ---
-if st.session_state.last_result is not None:
-    result = st.session_state.last_result
-    a2, a3 = st.columns(2)
-    with a2:
-        if st.button("📞 전화 대본 만들기", use_container_width=True):
-            st.session_state.show_phone_script = not st.session_state.show_phone_script
-    with a3:
-        if st.button("📄 사건 요약 리포트 만들기", use_container_width=True):
-            st.session_state.show_report = True
+# --- guided phase: 대응 도구 버튼 3개 ---
+if st.session_state.chat_phase == "guided":
+    tool_cols = st.columns(3)
+    for col, (tool_key, label) in zip(tool_cols, TOOL_BUTTONS):
+        with col:
+            if st.button(label, key=f"tool_{tool_key}", use_container_width=True):
+                try:
+                    with st.spinner("작성 중이에요…"):
+                        output = services.make_tool(tool_key, st.session_state.damage_stage, _history())
+                    st.session_state.tool_outputs[tool_key] = output
+                    reply(f"**{label}**\n\n{output}")
+                except requests.exceptions.RequestException:
+                    reply(CONNECTION_ERROR_MESSAGE)
+                st.rerun()
 
-    if st.session_state.show_phone_script:
-        script = services.generate_phone_script(result.fraud_type_id)
-        with st.container():
-            st.markdown('<div class="dj-card dj-card-white">', unsafe_allow_html=True)
-            st.markdown("**📞 그대로 읽으시면 돼요**")
-            st.caption(script["intro"])
-            st.markdown(f'**첫 마디**: {fmt(script["opening"])}', unsafe_allow_html=True)
-            st.markdown("**상대가 물어볼 것**")
-            for q, a in script["expected_qna"]:
-                st.markdown(f"- {q} → {a}")
-            st.markdown("**꼭 요청할 것**: " + " / ".join(script["must_say"]))
-            st.markdown("**통화 끝나고 받아적을 것**: " + " / ".join(script["after_call"]))
-            st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.session_state.show_report:
-        report_text = services.generate_case_report(_plain_history())
+    if "report" in st.session_state.tool_outputs:
         st.download_button(
-            "⬇️ 사건 요약 리포트 다운로드 (.md)",
-            data=report_text,
+            "⬇️ 피해 상황 요약 리포트 다운로드 (.md)",
+            data=st.session_state.tool_outputs["report"],
             file_name="텅장지키미_상담요약.md",
             mime="text/markdown",
         )
@@ -106,23 +162,15 @@ if st.session_state.last_result is not None:
 st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
 # --- 입력창 (캡처/녹음 첨부는 입력창의 파일 아이콘으로) ---
-user_input = st.chat_input(
+submission = st.chat_input(
     data.CHAT_INPUT_PLACEHOLDER,
     accept_file="multiple",
     file_type=["png", "jpg", "jpeg", "mp3", "m4a", "wav"],
 )
-if user_input:
-    for uploaded in user_input.files:
-        if (uploaded.type or "").startswith("image/"):
-            st.session_state.chat_log.append({"role": "user", "content": f"📎 캡처 업로드: {uploaded.name}"})
-            st.session_state.chat_log.append(
-                {"role": "assistant", "content": "캡처 확인했어요! 지금은 화면 속 문구를 직접 채팅으로도 같이 알려주시면 더 정확하게 봐드릴 수 있어요."}
-            )
-        else:
-            st.session_state.chat_log.append({"role": "user", "content": f"🎙 통화 녹음 업로드: {uploaded.name}"})
-            st.session_state.chat_log.append(
-                {"role": "assistant", "content": "녹음 확인했어요! 통화에서 상대가 뭐라고 했는지 짧게 요약해서 채팅으로 알려주시면 더 정확해요."}
-            )
-    if user_input.text:
-        handle_user_message(user_input.text)
+
+if submission:
+    if submission.files:
+        handle_uploaded_files(submission.files)
+    if submission.text:
+        handle_user_message(submission.text)
     st.rerun()
