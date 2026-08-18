@@ -43,12 +43,38 @@ def handle_user_message(text: str) -> None:
         st.session_state.chat_log.append({"role": "assistant", "content": data.CARE_MESSAGE})
 
 
+IMAGE_EXT = ("png", "jpg", "jpeg")
+AUDIO_EXT = ("mp3", "m4a", "wav")
+
+
+def handle_uploaded_files(files) -> None:
+    """채팅바에서 첨부한 캡처·녹음 처리."""
+    for f in files:
+        ext = f.name.rsplit(".", 1)[-1].lower()
+        if ext in IMAGE_EXT:
+            icon, kind, reply = "📎", "캡처", (
+                "캡처 확인했어요. 화면 속 문구를 채팅으로도 같이 알려주시면 더 정확하게 봐드릴 수 있어요."
+            )
+        elif ext in AUDIO_EXT:
+            icon, kind, reply = "🎙", "통화 녹음", (
+                "녹음 확인했어요. 통화에서 상대가 뭐라고 했는지 짧게 요약해 주시면 더 정확해요."
+            )
+        else:
+            icon, kind, reply = "📄", "파일", "파일 확인했어요."
+        st.session_state.chat_log.append({"role": "user", "content": f"{icon} {kind} 첨부: {f.name}"})
+        st.session_state.chat_log.append({"role": "assistant", "content": reply})
+
+
 # --- 헤더 ---
 header_col, reset_col = st.columns([5, 1])
 with header_col:
-    st.markdown('<div class="dj-headline" style="font-size:1.8rem;">💬 상황 진단</div>', unsafe_allow_html=True)
+    st.markdown(
+        '''<div class="dj-eyebrow">상담</div>
+        <div class="dj-headline" style="font-size:1.85rem; margin-top:0.25rem;">상황 진단</div>''',
+        unsafe_allow_html=True,
+    )
 with reset_col:
-    if st.button("🔄 새 상담", use_container_width=True):
+    if st.button("새 상담", use_container_width=True):
         st.session_state.chat_log = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
         st.session_state.last_result = None
         st.session_state.show_phone_script = False
@@ -74,10 +100,10 @@ if st.session_state.last_result is not None:
     result = st.session_state.last_result
     a2, a3 = st.columns(2)
     with a2:
-        if st.button("📞 전화 대본 만들기", use_container_width=True):
+        if st.button("전화 대본 만들기", use_container_width=True):
             st.session_state.show_phone_script = not st.session_state.show_phone_script
     with a3:
-        if st.button("📄 사건 요약 리포트 만들기", use_container_width=True):
+        if st.button("사건 요약 리포트", use_container_width=True):
             st.session_state.show_report = True
 
     if st.session_state.show_phone_script:
@@ -107,7 +133,8 @@ st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
 # --- 빠른 시작 칩 (대화 초반에만 노출) ---
 if len(st.session_state.chat_log) <= 1:
-    st.caption("빠르게 시작하기")
+    st.caption("어떤 상황인지 눌러주세요. 직접 쓰셔도 돼요.")
+
     rows = [data.QUICK_START_CHIPS[i : i + 3] for i in range(0, len(data.QUICK_START_CHIPS), 3)]
     for row in rows:
         cols = st.columns(len(row))
@@ -117,32 +144,29 @@ if len(st.session_state.chat_log) <= 1:
                     handle_user_message(chip)
                     st.rerun()
 
-# --- 업로드 (캡처 / 통화 녹음) ---
-up1, up2 = st.columns(2)
-with up1:
-    with st.popover("📎 문자·카톡 캡처 올리기", use_container_width=True):
-        st.caption(data.UPLOAD_HINT)
-        capture = st.file_uploader("캡처 업로드", type=["png", "jpg", "jpeg"], key="capture_upload", label_visibility="collapsed")
-        if capture is not None and st.session_state.get("last_capture_name") != capture.name:
-            st.session_state["last_capture_name"] = capture.name
-            st.session_state.chat_log.append({"role": "user", "content": f"📎 캡처 업로드: {capture.name}"})
-            st.session_state.chat_log.append(
-                {"role": "assistant", "content": "캡처 확인했어요! 지금은 화면 속 문구를 직접 채팅으로도 같이 알려주시면 더 정확하게 봐드릴 수 있어요."}
-            )
-            st.rerun()
-with up2:
-    with st.popover("🎙 통화 녹음 올리기", use_container_width=True):
-        recording = st.file_uploader("녹음 업로드", type=["mp3", "m4a", "wav"], key="recording_upload", label_visibility="collapsed")
-        if recording is not None and st.session_state.get("last_recording_name") != recording.name:
-            st.session_state["last_recording_name"] = recording.name
-            st.session_state.chat_log.append({"role": "user", "content": f"🎙 통화 녹음 업로드: {recording.name}"})
-            st.session_state.chat_log.append(
-                {"role": "assistant", "content": "녹음 확인했어요! 통화에서 상대가 뭐라고 했는지 짧게 요약해서 채팅으로 알려주시면 더 정확해요."}
-            )
-            st.rerun()
+    with st.expander(data.QUICK_START_MORE_LABEL):
+        more_cols = st.columns(len(data.QUICK_START_CHIPS_MORE))
+        for col, chip in zip(more_cols, data.QUICK_START_CHIPS_MORE):
+            with col:
+                if st.button(chip, key=f"chip_more_{chip}", use_container_width=True):
+                    handle_user_message(chip)
+                    st.rerun()
+
+    st.caption(f"📎 {data.UPLOAD_HINT}")
 
 # --- 입력창 ---
-user_input = st.chat_input(data.CHAT_INPUT_PLACEHOLDER)
-if user_input:
-    handle_user_message(user_input)
+submission = st.chat_input(
+    data.CHAT_INPUT_PLACEHOLDER,
+    accept_file="multiple",
+    file_type=["png", "jpg", "jpeg", "mp3", "m4a", "wav"],
+)
+
+if submission:
+    files = getattr(submission, "files", None) or []
+    text = (getattr(submission, "text", None) or "").strip()
+
+    if files:
+        handle_uploaded_files(files)
+    if text:
+        handle_user_message(text)
     st.rerun()
