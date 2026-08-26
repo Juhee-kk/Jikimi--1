@@ -22,6 +22,7 @@ Upstage Solar Pro(solar-pro4)를 OpenAI 호환 chat completions 형식으로 호
 from __future__ import annotations
 
 import json
+import os
 import re
 
 import requests
@@ -31,6 +32,17 @@ import guide_data
 
 UPSTAGE_URL = "https://api.upstage.ai/v1/chat/completions"
 MODEL = "solar-pro4"
+
+# scam_data_pipeline.py(윤서의 수집·임베딩 파이프라인, GitHub main)와 동일한 접속 정보.
+# 인덱싱 쪽은 embedding-passage로 임베딩했으므로, 검색(쿼리) 쪽은 비대칭 검색 관례대로
+# embedding-query 모델을 쓴다 — 임베딩 대상(문서 vs 질의)이 다르면 모델도 짝을 맞춰야 한다.
+UPSTAGE_EMBEDDING_URL = "https://api.upstage.ai/v1/embeddings"
+UPSTAGE_QUERY_EMBEDDING_MODEL = os.getenv("UPSTAGE_QUERY_EMBEDDING_MODEL", "embedding-query")
+QDRANT_URL = os.getenv(
+    "QDRANT_URL",
+    "https://32cd9c82-9cec-491c-acc9-fbd57c385e1b.sa-east-1-0.aws.cloud.qdrant.io",
+)
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "0818")
 
 
 def contains_sensitive_info(text: str) -> bool:
@@ -102,12 +114,54 @@ def _situation_text(diagnosis: dict) -> str:
     return f"아직 판정에 필요한 정보가 부족한 상태.\n감지된 위험 신호: {signal_labels}"
 
 
-def search_similar_cases(diagnosis: dict) -> list[dict]:
-    """category_hints/scenario_hints로 Qdrant 유사사례를 검색한다.
-    접속 정보·수집 파이프라인 코드를 아직 못 받아 스텁 상태 — 항상 빈 리스트.
-    실제 연동 시 이 함수만 채우면 된다 (반환 형식은 case_db_schema 참고:
-    headline_ko/summary_ko/severity_score 등)."""
-    return []
+def _embed_query(text: str) -> list[float]:
+    api_key = st.secrets["UPSTAGE_API_KEY"]
+    r = requests.post(
+        UPSTAGE_EMBEDDING_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"model": UPSTAGE_QUERY_EMBEDDING_MODEL, "input": [text]},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["data"][0]["embedding"]
+
+
+def search_similar_cases(diagnosis: dict, limit: int = 2) -> list[dict]:
+    """category_hints/scenario_hints로 Qdrant에서 유사사례 상위 limit건을 찾는다.
+    QDRANT_API_KEY가 없거나 검색 자체가 실패해도 빈 리스트를 반환한다 — "유사사례"
+    섹션은 signals.json 규칙대로 콘텐츠가 없으면 그냥 생략되므로, 여기서 예외가 나도
+    가이드 카드 전체(지금 당장 해야 할 조치)가 깨지면 안 된다."""
+    if not diagnosis["category_hints"]:
+        return []
+    api_key = st.secrets.get("QDRANT_API_KEY") or os.getenv("QDRANT_API_KEY")
+    if not api_key:
+        return []
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import FieldCondition, Filter, MatchAny
+
+        query_text = ", ".join(diagnosis["category_hints"] + diagnosis["scenario_hints"])
+        vector = _embed_query(query_text)
+        client = QdrantClient(url=QDRANT_URL, api_key=api_key)
+        result = client.query_points(
+            collection_name=QDRANT_COLLECTION,
+            query=vector,
+            query_filter=Filter(
+                must=[FieldCondition(key="category", match=MatchAny(any=diagnosis["category_hints"]))]
+            ),
+            limit=limit,
+            with_payload=True,
+        )
+        return [
+            {
+                "headline_ko": p.payload.get("headline_ko", ""),
+                "summary_ko": p.payload.get("summary_ko", ""),
+                "severity_score": p.payload.get("severity_score"),
+            }
+            for p in result.points
+        ]
+    except Exception:
+        return []
 
 
 def _section_content(key: str, diagnosis: dict, chat_messages: list[dict]) -> tuple[str, object] | None:
