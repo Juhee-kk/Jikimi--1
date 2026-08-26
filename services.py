@@ -7,15 +7,19 @@ Upstage Solar Pro(solar-pro4)를 OpenAI 호환 chat completions 형식으로 호
 from __future__ import annotations
 
 import json
+import os
 import re
 
 import requests
-import streamlit as st
 
 import mock_data as data
 
 UPSTAGE_URL = "https://api.upstage.ai/v1/chat/completions"
 MODEL = "solar-pro4"
+
+
+class MissingUpstageAPIError(RuntimeError):
+    """Raised when the Upstage API key is not available in the environment."""
 
 
 def contains_sensitive_info(text: str) -> bool:
@@ -28,7 +32,10 @@ def contains_sensitive_info(text: str) -> bool:
 
 
 def call_llm(system: str, messages: list[dict], temperature: float = 0.3) -> str:
-    api_key = st.secrets["UPSTAGE_API_KEY"]
+    api_key = os.getenv("UPSTAGE_API")
+    if not api_key:
+        raise MissingUpstageAPIError("UPSTAGE_API 환경변수가 필요합니다.")
+
     payload = {
         "model": MODEL,
         "messages": [{"role": "system", "content": system}] + messages,

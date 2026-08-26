@@ -1,4 +1,7 @@
+import csv
+import math
 from html import escape
+from pathlib import Path
 
 import streamlit as st
 
@@ -7,6 +10,7 @@ from components import fmt, queue_chat_prefill, render_quiz
 
 RECENT_REPORT_COUNTS = data.get_recent_report_counts(days=30)
 NEWLY_DETECTED_SCAMS = data.get_newly_detected_scams(days=30)
+VOICE_PHISHING_CSV = Path(__file__).resolve().parents[1] / "data" / "경찰청_보이스피싱 현황_20251231.csv"
 
 st.markdown(
     """
@@ -134,6 +138,10 @@ st.markdown(
     }
     .news-trend-highlight {
         text-align: right;
+        display: flex;
+        justify-content: flex-end;
+        align-items: flex-end;
+        min-height: 4.2rem;
     }
     .news-trend-highlight .news-trend-label {
         font-size: 0.78rem;
@@ -173,34 +181,288 @@ st.markdown(
             margin-top: 1rem;
         }
     }
+    .news-evidence-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+        gap: 1rem;
+        margin-top: 0.9rem;
+    }
+    .news-chart-card {
+        background: var(--dj-white);
+        border: 1px solid var(--dj-border);
+        border-radius: var(--dj-radius-lg);
+        padding: 1.15rem 1.2rem;
+        box-shadow: 0 6px 20px rgba(43, 35, 32, 0.06);
+    }
+    .news-governance-message {
+        font-weight: 800;
+        color: var(--dj-primary-dark);
+        font-size: 1rem;
+        line-height: 1.55;
+    }
+    .news-chart-svg {
+        width: 100%;
+        height: auto;
+        display: block;
+        margin-top: 0.8rem;
+    }
+    .news-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 0.85rem;
+        margin-top: 0.8rem;
+        font-size: 0.72rem;
+        opacity: 0.74;
+    }
+    .news-legend-dot {
+        display: inline-block;
+        width: 0.62rem;
+        height: 0.62rem;
+        border-radius: 999px;
+        margin-right: 0.28rem;
+        vertical-align: -0.04rem;
+    }
+    .news-age-summary {
+        display: grid;
+        grid-template-columns: minmax(150px, 0.82fr) minmax(0, 1fr);
+        align-items: center;
+        gap: 1rem;
+        margin-top: 0.95rem;
+    }
+    .news-pie-item {
+        border: 1px solid var(--dj-border);
+        border-radius: 16px;
+        padding: 0.9rem 0.75rem;
+        background: rgba(251, 243, 231, 0.42);
+        text-align: center;
+    }
+    .news-pie-year {
+        font-size: 0.8rem;
+        font-weight: 800;
+        color: var(--dj-primary-dark);
+    }
+    .news-age-list {
+        display: grid;
+        gap: 0.62rem;
+    }
+    .news-age-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 0.55rem;
+        border-bottom: 1px solid rgba(43, 35, 32, 0.08);
+        padding-bottom: 0.55rem;
+        font-size: 0.78rem;
+    }
+    .news-age-row:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+    }
+    .news-age-name {
+        font-weight: 800;
+        color: var(--dj-primary-dark);
+    }
+    .news-age-count {
+        opacity: 0.6;
+        text-align: right;
+    }
+    .news-age-percent {
+        font-weight: 800;
+        color: var(--dj-text);
+    }
+    .news-age-row.is-youth,
+    .news-age-row.is-youth .news-age-name,
+    .news-age-row.is-youth .news-age-count,
+    .news-age-row.is-youth .news-age-percent {
+        color: #D84A3A;
+        opacity: 1;
+    }
+    .news-context-copy {
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        line-height: 1.8;
+        color: rgba(43, 35, 32, 0.78);
+    }
+    .news-context-copy strong {
+        color: var(--dj-primary-dark);
+    }
+    @media (max-width: 760px) {
+        .news-evidence-grid,
+        .news-age-summary {
+            grid-template-columns: 1fr;
+        }
+        .news-chart-card {
+            padding: 0.95rem;
+        }
+        .news-governance-message {
+            font-size: 0.9rem;
+        }
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
-def render_monthly_trend(summary: dict) -> None:
+@st.cache_data
+def load_voice_phishing_rows() -> list[dict]:
+    rows = []
+    with VOICE_PHISHING_CSV.open(encoding="cp949", newline="") as csv_file:
+        for row in csv.DictReader(csv_file):
+            parsed = {
+                "year": int(row["구분"]),
+                "cases": int(row["총_발생건수"]),
+                "damage": int(row["총_피해액_억원"]),
+                "age_2030": int(row["20대이하"]) + int(row["30대"]),
+                "age_4050": int(row["40대"]) + int(row["50대"]),
+                "age_6070": int(row["60대"]) + int(row["70대이상"]),
+            }
+            parsed["age_total"] = parsed["age_2030"] + parsed["age_4050"] + parsed["age_6070"]
+            parsed["age_2030_share"] = parsed["age_2030"] / parsed["age_total"] * 100
+            rows.append(parsed)
+    return rows
+
+
+def fmt_pct(value: float) -> str:
+    return f"{value:.1f}%"
+
+
+def trend_change_label(current: int, previous: int, base_year: int) -> str:
+    change = (current - previous) / previous * 100
+    direction = "상승" if change >= 0 else "하락"
+    return f"{base_year}년 대비 {abs(change):.1f}% {direction}"
+
+
+def render_voice_combo_chart(rows: list[dict]) -> str:
+    width, height = 780, 330
+    left, right, top, bottom = 58, 118, 42, 48
+    chart_w = width - left - right
+    chart_h = height - top - bottom
+    max_cases = max(row["cases"] for row in rows)
+    max_damage = max(row["damage"] for row in rows)
+    step = chart_w / len(rows)
+    bar_w = min(34, step * 0.48)
+
+    grid_lines = []
+    for i in range(5):
+        y = top + chart_h * i / 4
+        grid_lines.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="rgba(43,35,32,0.10)" />')
+
+    bars = []
+    points = []
+    year_labels = []
+    for i, row in enumerate(rows):
+        x = left + step * i + step / 2
+        bar_h = row["cases"] / max_cases * chart_h
+        y = top + chart_h - bar_h
+        bars.append(
+            f'<rect x="{x - bar_w / 2:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" '
+            'rx="7" fill="#D8D2C8" opacity="0.95" />'
+        )
+        line_y = top + chart_h - row["damage"] / max_damage * chart_h
+        points.append((x, line_y, row))
+        if i % 2 == 0 or i == len(rows) - 1:
+            year_labels.append(f'<text x="{x:.1f}" y="{height-19}" text-anchor="middle" font-size="22" fill="rgba(43,35,32,0.62)">{row["year"]}</text>')
+
+    path_points = " ".join(f'{x:.1f},{y:.1f}' for x, y, _ in points)
+    circles = [
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5.5" fill="#D84A3A"><title>{row["year"]}년 피해액 {row["damage"]:,}억원</title></circle>'
+        for x, y, row in points
+    ]
+    last_x, last_y, last_row = points[-1]
+    annotations = (
+        f'<rect x="{last_x - 152:.1f}" y="{last_y - 36:.1f}" width="124" height="26" rx="8" fill="#FFFFFF" opacity="0.94" />'
+        f'<text x="{last_x - 34:.1f}" y="{last_y - 17:.1f}" text-anchor="end" font-size="18" font-weight="700" fill="#D84A3A">'
+        f'{last_row["damage"]:,}억원</text>'
+    )
+
+    return (
+        f'<svg class="news-chart-svg" viewBox="0 0 {width} {height}" role="img" aria-label="년도별 보이스피싱 발생건수와 피해액">'
+        f'{"".join(grid_lines)}'
+        f'{"".join(bars)}'
+        f'<polyline points="{path_points}" fill="none" stroke="#D84A3A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />'
+        f'{"".join(circles)}{annotations}{"".join(year_labels)}'
+        '</svg>'
+    )
+
+
+def pie_slice_path(cx: float, cy: float, radius: float, start: float, end: float) -> str:
+    start_rad = math.radians(start - 90)
+    end_rad = math.radians(end - 90)
+    x1, y1 = cx + radius * math.cos(start_rad), cy + radius * math.sin(start_rad)
+    x2, y2 = cx + radius * math.cos(end_rad), cy + radius * math.sin(end_rad)
+    large_arc = 1 if end - start > 180 else 0
+    return f"M {cx} {cy} L {x1:.3f} {y1:.3f} A {radius} {radius} 0 {large_arc} 1 {x2:.3f} {y2:.3f} Z"
+
+
+def render_age_pie(row: dict) -> str:
+    colors = {"age_2030": "#E2704F", "age_4050": "#F0C94A", "age_6070": "#1F3D34"}
+    values = [("age_2030", row["age_2030"]), ("age_4050", row["age_4050"]), ("age_6070", row["age_6070"])]
+    start = 0.0
+    slices = []
+    for key, value in values:
+        end = start + value / row["age_total"] * 360
+        slices.append(f'<path d="{pie_slice_path(60, 60, 48, start, end)}" fill="{colors[key]}" />')
+        start = end
+    return (
+        '<svg class="news-chart-svg news-age-pie-svg" viewBox="0 0 120 120" role="img" '
+        f'aria-label="{row["year"]}년 연령대별 피해 비중">'
+        f'{"".join(slices)}'
+        '<circle cx="60" cy="60" r="31" fill="#fffaf2" />'
+        f'<text x="60" y="57" text-anchor="middle" font-size="14" font-weight="800" fill="#E2704F">{fmt_pct(row["age_2030_share"])}</text>'
+        '<text x="60" y="74" text-anchor="middle" font-size="11" fill="rgba(43,35,32,0.62)">2030</text>'
+        '</svg>'
+    )
+
+
+def render_age_breakdown(row: dict) -> str:
+    colors = {"2030": "#E2704F", "4050": "#F0C94A", "6070": "#1F3D34"}
+    groups = [
+        ("2030", row["age_2030"]),
+        ("4050", row["age_4050"]),
+        ("6070", row["age_6070"]),
+    ]
+    return "".join(
+        f'<div class="news-age-row {"is-youth" if label == "2030" else ""}">'
+        f'<span><span class="news-legend-dot" style="background:{colors[label]};"></span><span class="news-age-name">{index}위 {label}</span></span>'
+        f'<span class="news-age-count">{count:,}건</span>'
+        f'<span class="news-age-percent">{fmt_pct(count / row["age_total"] * 100)}</span>'
+        '</div>'
+        for index, (label, count) in enumerate(groups, start=1)
+    )
+
+
+def render_voice_phishing_trends() -> None:
+    rows = load_voice_phishing_rows()
+    latest = rows[-1]
+    previous = next(row for row in rows if row["year"] == latest["year"] - 1)
+    average_youth_share = sum(row["age_2030_share"] for row in rows if 2019 <= row["year"] <= 2025) / 7
+
     head_col, highlight_col = st.columns([2, 1])
     with head_col:
         st.markdown(
-            '<div class="dj-headline" style="font-size:1.8rem;">요즘 이런 게 돌아요</div>'
-            '<div style="font-size:0.85rem; opacity:0.65; margin-top:0.4rem;">뉴스와 기관 발표에서 매일 수집해 정리합니다.</div>',
+            '<div class="dj-headline" style="font-size:1.8rem;">2025년, 당신의 통장은 안전했나요?</div>'
+            '<div style="font-size:0.85rem; opacity:0.65; margin-top:0.4rem;"> 2025년 보이스피싱 통계에서 출발해, 청년층이 지금 조심해야 할 신종 수법까지 이어서 봅니다.</div>',
             unsafe_allow_html=True,
         )
     with highlight_col:
         st.markdown(
             '<div class="news-trend-highlight">'
-            f'<div class="news-trend-label">{summary["month_label"]}</div>'
-            f'<div class="news-trend-count">{summary["total_count_label"]}</div>'
-            f'<div class="news-trend-amount">{summary["total_amount_label"]}</div>'
+            '<div class="news-trend-label">출처: 공공데이터_ 경찰청_보이스피싱 현황 통계자료</div>'
             '</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown('<div class="news-trend-divider"></div>', unsafe_allow_html=True)
 
-    stat_cols = st.columns(len(summary["stats"]))
-    for col, stat in zip(stat_cols, summary["stats"]):
+    stats = [
+        {"value": f'{latest["cases"]:,}건', "change": trend_change_label(latest["cases"], previous["cases"], previous["year"]), "label": "2025년 발생건수"},
+        {"value": f'{latest["damage"]:,}억원', "change": trend_change_label(latest["damage"], previous["damage"], previous["year"]), "label": "2025년 피해액"},
+        {"value": fmt_pct(latest["age_2030_share"]), "change": f'2019~2025 평균 {fmt_pct(average_youth_share)}', "label": "20·30대 피해 비중"},
+        {"value": f'{latest["damage"] / latest["cases"] * 10000:,.0f}만원', "change": None, "label": "1건당 평균 피해액"},
+    ]
+    stat_cols = st.columns(len(stats))
+    for col, stat in zip(stat_cols, stats):
         with col:
             change_html = f'<div class="news-trend-change">{fmt(stat["change"])}</div>' if stat.get("change") else ""
             st.markdown(
@@ -212,8 +474,38 @@ def render_monthly_trend(summary: dict) -> None:
                 unsafe_allow_html=True,
             )
 
+    pie_item = (
+        '<div class="news-pie-item">'
+        f'<div class="news-pie-year">{latest["year"]} 연령별 피해비중</div>'
+        f'{render_age_pie(latest)}'
+        '</div>'
+    )
+    st.markdown(
+        '<div class="news-evidence-grid">'
+        '<div class="news-chart-card">'
+        '<div class="news-governance-message">보이스피싱 피해액이 빠르게 증가하고 있어요.</div>'
+        f'{render_voice_combo_chart(rows)}'
+        '<div class="news-chart-legend">'
+        '<span><span class="news-legend-dot" style="background:#D8D2C8;"></span>발생건수</span>'
+        '<span><span class="news-legend-dot" style="background:#D84A3A;"></span>피해액(억원)</span>'
+        '</div>'
+        '</div>'
+        '<div class="news-chart-card">'
+        '<div class="news-governance-message">2030도 주요 타겟이에요.</div>'
+        '<div class="news-context-copy" style="margin-top:0.45rem;">디지털에 익숙한 2030 또한 투자·부업·문자 링크처럼 온라인에서 시작되는 수법에 쉽게 노출될 수 있어요.</div>'
+        f'<div class="news-age-summary">{pie_item}<div class="news-age-list">{render_age_breakdown(latest)}</div></div>'
+        '</div>'
+        '</div>'
+        '<div class="news-context-copy">'
+        '<strong>보이스피싱은 전화 한 통에서 끝나지 않고, 여러 디지털 수법으로 번지고 있어요.</strong> '
+        '기관 사칭, 대출빙자형 보이스피싱뿐 아니라 투자 리딩방, 문자 링크, 중고거래, 로맨스 스캠처럼 돈을 보내게 만드는 수법이 더 다양해졌습니다. '
+        '청년층에게 특히 자주 보이는 주요 수법을 먼저 모았습니다.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-render_monthly_trend(data.NEWS_MONTHLY_SUMMARY)
+
+render_voice_phishing_trends()
 
 # --- 개인화 알림 배너 ---
 if st.session_state.get("history_log"):
@@ -227,13 +519,12 @@ if st.session_state.get("history_log"):
     )
 
 # --- 상단 요약 위젯 ---
-summary = data.NEWS_WEEKLY_SUMMARY
 st.markdown(
-    f'''
+    '''
     <div class="dj-card dj-card-dark" style="margin-top:1rem;">
-        <strong>이번 주 한 줄 요약</strong><br>
-        {summary["top_type"]}이 제일 많이 돌고 있어요. 특히 20대 대상으로요.<br>
-        핵심은 하나예요. <strong>"{summary["phrase"]}"</strong> 이 말이 나오면 그냥 끊으세요.
+        <strong>청년층 대상 주요 수법은 다음과 같아요</strong><br>
+        처음엔 전화 한 통, 문자 하나, 알바 제안 하나처럼 보여도 마지막엔 송금·대출·개인정보 요구로 이어집니다.<br>
+        핵심은 하나예요. <strong>"먼저 돈을 넣어야 한다"</strong>는 말이 나오면 멈추고 확인하세요.
     </div>
     ''',
     unsafe_allow_html=True,

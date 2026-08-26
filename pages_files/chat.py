@@ -12,6 +12,7 @@ TOOL_BUTTONS = [
 ]
 
 CONNECTION_ERROR_MESSAGE = "지금 분석 서버 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요."
+MISSING_API_KEY_MESSAGE = "UPSTAGE_API 환경변수가 설정되어 있지 않아요. 실행 터미널에서 키를 설정한 뒤 앱을 다시 시작해 주세요."
 
 
 # --- 세션 초기화 ---
@@ -92,6 +93,8 @@ def handle_user_message(text: str) -> None:
 
         elif phase == "guided":
             reply("추가로 궁금한 점이 있으면 편하게 말씀해 주세요. 새로운 상담은 위의 '새 상담' 버튼을 눌러주세요.")
+    except services.MissingUpstageAPIError:
+        reply(MISSING_API_KEY_MESSAGE)
     except requests.exceptions.RequestException:
         reply(CONNECTION_ERROR_MESSAGE)
 
@@ -147,6 +150,8 @@ if st.session_state.chat_phase == "guided":
                         output = services.make_tool(tool_key, st.session_state.damage_stage, _history())
                     st.session_state.tool_outputs[tool_key] = output
                     reply(f"**{label}**\n\n{output}")
+                except services.MissingUpstageAPIError:
+                    reply(MISSING_API_KEY_MESSAGE)
                 except requests.exceptions.RequestException:
                     reply(CONNECTION_ERROR_MESSAGE)
                 st.rerun()
