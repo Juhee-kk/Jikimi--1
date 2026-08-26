@@ -273,19 +273,16 @@ BROWSER_UA = (
 )
 
 GOOGLE_NEWS_QUERY_TERMS = [
-    "금융사기",
-    "피싱",
-    "스캠",
-    "사칭 사기",
-    "명의도용",
-    "악성앱",
     "신종 사기",
-    "보이스피싱",
-    "대출사기",
-    "투자사기",
-    "중고거래 사기",
-    "부업 사기",
+    "신종 피싱",
+    "청년 사기",
 ]
+
+GOOGLE_NEWS_QUERY_LIMITS = {
+    "신종 사기": 50,
+    "신종 피싱": 50,
+    "청년 사기": 50,
+}
 
 RSS_FEEDS = [
     {
@@ -326,6 +323,8 @@ FRAUD_TERMS_STRONG = {
     "악성앱",
     "악성 앱",
     "신종 사기",
+    "신종 피싱",
+    "청년 사기",
     "사칭 사기",
     "사칭 피싱",
 }
@@ -489,16 +488,31 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def strip_surrogate_chars(value: Any) -> Any:
+    if isinstance(value, str):
+        return "".join(char for char in value if not 0xD800 <= ord(char) <= 0xDFFF)
+    if isinstance(value, list):
+        return [strip_surrogate_chars(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            strip_surrogate_chars(key) if isinstance(key, str) else key: strip_surrogate_chars(item)
+            for key, item in value.items()
+        }
+    return value
+
+
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as file:
         for row in rows:
+            row = strip_surrogate_chars(row)
             file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def http_json(url: str, body: dict[str, Any], api_key: str, timeout: int) -> dict[str, Any]:
+    body = strip_surrogate_chars(body)
     request = urllib.request.Request(
         url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -597,8 +611,8 @@ def child_text(item: ElementTree.Element, tag: str) -> str:
     return child.text if child is not None and child.text else ""
 
 
-def build_google_news_feeds() -> list[dict[str, str]]:
-    feeds: list[dict[str, str]] = []
+def build_google_news_feeds() -> list[dict[str, Any]]:
+    feeds: list[dict[str, Any]] = []
     for keyword in GOOGLE_NEWS_QUERY_TERMS:
         encoded = urllib.parse.urlencode(
             {"q": keyword, "hl": "ko", "gl": "KR", "ceid": "KR:ko"}
@@ -607,6 +621,7 @@ def build_google_news_feeds() -> list[dict[str, str]]:
             {
                 "source": f"google_news:{keyword}",
                 "url": f"https://news.google.com/rss/search?{encoded}",
+                "limit": GOOGLE_NEWS_QUERY_LIMITS.get(keyword),
             }
         )
     return feeds
@@ -659,7 +674,7 @@ def resolve_google_news_url(link: str, timeout: int = 15) -> str:
     return link
 
 
-def fetch_feed(feed: dict[str, str], timeout: int = 15) -> list[RawArticle]:
+def fetch_feed(feed: dict[str, Any], timeout: int = 15) -> list[RawArticle]:
     request = urllib.request.Request(feed["url"], headers={"User-Agent": FEED_UA})
     with urllib.request.urlopen(request, timeout=timeout, context=ssl_context()) as response:
         xml_bytes = response.read()
@@ -719,6 +734,7 @@ def collect(
     per_feed: dict[str, int] = {}
 
     for feed in feeds:
+        feed_limit = feed.get("limit", limit)
         try:
             articles = fetch_feed(feed, timeout=timeout)
         except Exception as exc:
@@ -742,7 +758,7 @@ def collect(
             kept += 1
             if verbose:
                 print(f"[collect] {article.source}: {article.title[:70]}", flush=True)
-            if limit is not None and kept >= limit:
+            if feed_limit is not None and kept >= feed_limit:
                 break
         per_feed[feed["source"]] = kept
 
@@ -909,12 +925,12 @@ def structure(limit: int | None = None, verbose: bool = False) -> dict[str, Any]
             print(f"[structure] {index}/{len(pending)} {article['title'][:70]}", flush=True)
         try:
             row = structure_article(article)
+            append_jsonl(STRUCTURED_JSONL, [row])
         except Exception as exc:
             failed.append({"id": article.get("id", ""), "error": str(exc)})
             print(f"[structure] 실패 {article.get('id')}: {exc}", file=sys.stderr, flush=True)
             continue
 
-        append_jsonl(STRUCTURED_JSONL, [row])
         if row["category"] == "irrelevant":
             irrelevant_count += 1
         else:
