@@ -1,0 +1,884 @@
+{
+  "version": "1.0",
+  "signals": [
+    {
+      "id": "A01",
+      "label": "수사기관이 쓰지 않는 용어",
+      "weight": 3,
+      "patterns": [
+        "사건조회",
+        "약식조사",
+        "보호관찰",
+        "자산검수",
+        "자산이전",
+        "감상문",
+        "특급보안",
+        "엠바고",
+        "비밀수사"
+      ],
+      "explain": "검찰·경찰은 실제로 이런 용어를 쓰지 않아요. 경찰청이 공식 발표한 사칭 표현이에요.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "public_official_impersonation"
+    },
+    {
+      "id": "A02",
+      "label": "안전계좌 이체 요구",
+      "weight": 3,
+      "patterns": [
+        "안전계좌",
+        "안전 계좌",
+        "국가안전계좌",
+        "보호계좌",
+        "자금을 옮기",
+        "돈을 옮기"
+      ],
+      "explain": "어떤 수사기관도 계좌 이체를 요구하지 않아요. 이 문장 하나만으로도 사기입니다.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "public_official_impersonation"
+    },
+    {
+      "id": "A03",
+      "label": "제3자에게 알리지 말라는 요구",
+      "weight": 3,
+      "patterns": [
+        "아무한테도 말",
+        "말하면 안 된",
+        "누설",
+        "발설",
+        "비밀로",
+        "가족한테도",
+        "스피커폰"
+      ],
+      "explain": "통화 내용을 말하지 말라거나 스피커폰으로 하자는 건 전형적인 고립·압박 방식이에요.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "public_official_impersonation"
+    },
+    {
+      "id": "A04",
+      "label": "명의도용·대포통장 통보",
+      "weight": 3,
+      "patterns": [
+        "대포통장",
+        "명의도용",
+        "명의가 도용",
+        "범죄에 연루",
+        "자금세탁",
+        "계좌가 범죄"
+      ],
+      "explain": "계좌가 범죄에 쓰였다는 통보로 공포를 유발하는 건 기관사칭형의 시작 문장이에요.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "public_official_impersonation"
+    },
+    {
+      "id": "A05",
+      "label": "공공기관 사칭",
+      "weight": 2,
+      "patterns": [
+        "검찰",
+        "지검",
+        "경찰청",
+        "금융감독원",
+        "금감원",
+        "국세청",
+        "소비자원",
+        "우체국",
+        "수사관",
+        "검사님"
+      ],
+      "explain": "기관을 자처하며 접근하는 경우예요. 기관명만으로는 확정할 수 없지만 다른 신호와 함께 보면 위험합니다.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "public_official_impersonation"
+    },
+    {
+      "id": "A06",
+      "label": "상대가 알려준 번호로 연결 유도",
+      "weight": 3,
+      "patterns": [
+        "번호 알려줘",
+        "알려준 번호",
+        "이 번호로 전화",
+        "연결해드릴",
+        "돌려드릴"
+      ],
+      "explain": "상대가 준 번호로 걸면 조직에 연결돼요. 반드시 직접 검색한 공식 대표번호로 확인해야 해요.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "phone_guided_url_access"
+    },
+    {
+      "id": "A07",
+      "label": "위조 공문서 제시",
+      "weight": 3,
+      "patterns": [
+        "구속영장",
+        "체포영장",
+        "공문",
+        "공문서",
+        "수사협조",
+        "출석요구서",
+        "사건번호"
+      ],
+      "explain": "카카오톡이나 링크로 영장·공문을 보내는 수사기관은 없어요.",
+      "category_hint": "voice_phishing",
+      "scenario_hint": "public_official_impersonation"
+    },
+    {
+      "id": "B01",
+      "label": "앱 설치 요구",
+      "weight": 3,
+      "patterns": [
+        "앱을 설치",
+        "앱 설치",
+        "apk",
+        "설치하라",
+        "깔라",
+        "깔아",
+        "다운로드 받"
+      ],
+      "explain": "통화 중 앱 설치를 요구받았다면 원격제어 악성앱일 가능성이 높아요.",
+      "category_hint": "smishing",
+      "scenario_hint": "phone_malware_install"
+    },
+    {
+      "id": "B02",
+      "label": "통화 중 URL 구두 안내",
+      "weight": 3,
+      "patterns": [
+        "주소를 불러",
+        "주소 알려",
+        "링크 보내드릴",
+        "사이트 들어가",
+        "접속하세요"
+      ],
+      "explain": "통화하면서 주소를 불러주며 접속시키는 건 실시간 유도형 수법이에요.",
+      "category_hint": "smishing",
+      "scenario_hint": "phone_guided_url_access"
+    },
+    {
+      "id": "B03",
+      "label": "단축 URL·비공식 링크",
+      "weight": 2,
+      "patterns": [
+        "bit.ly",
+        "bit ly",
+        "단축",
+        "http",
+        "링크가 붙",
+        "링크 눌",
+        "url"
+      ],
+      "explain": "공식 기관 문자에는 단축 URL이 들어가지 않아요.",
+      "category_hint": "smishing",
+      "scenario_hint": null
+    },
+    {
+      "id": "B04",
+      "label": "택배·과태료·건강보험 사칭 문자",
+      "weight": 2,
+      "patterns": [
+        "택배",
+        "배송",
+        "과태료",
+        "건강보험",
+        "부고",
+        "청첩",
+        "교통위반",
+        "미납"
+      ],
+      "explain": "가장 흔한 스미싱 위장 소재예요. 링크가 함께 있으면 위험도가 올라가요.",
+      "category_hint": "smishing",
+      "scenario_hint": null
+    },
+    {
+      "id": "C01",
+      "label": "출금 조건으로 추가 입금 요구",
+      "weight": 3,
+      "patterns": [
+        "세금을 먼저",
+        "수수료를 먼저",
+        "선납",
+        "출금하려면",
+        "출금이 안",
+        "출금 거부",
+        "보증금 입금"
+      ],
+      "explain": "출금하려면 돈을 더 넣으라는 요구가 나온 시점이 사기 확정 신호예요. 절대 추가 송금하지 마세요.",
+      "category_hint": "investment_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "C02",
+      "label": "원금 보장·확정 수익 약속",
+      "weight": 3,
+      "patterns": [
+        "원금 보장",
+        "원금보장",
+        "확정 수익",
+        "무조건 수익",
+        "손실 없",
+        "고수익"
+      ],
+      "explain": "원금을 보장하는 합법 투자상품은 없어요. 이 말이 나오면 사기입니다.",
+      "category_hint": "investment_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "C03",
+      "label": "자체 앱·비공식 거래소",
+      "weight": 3,
+      "patterns": [
+        "자체 앱",
+        "전용 앱",
+        "이 앱에서만",
+        "우리 거래소",
+        "비상장",
+        "상장 예정"
+      ],
+      "explain": "정식 거래소가 아닌 자체 사이트·앱에서만 거래하게 하는 건 출금을 막기 위한 구조예요.",
+      "category_hint": "investment_scam",
+      "scenario_hint": "listing_scam_investment"
+    },
+    {
+      "id": "C04",
+      "label": "리딩방·오픈채팅 초대",
+      "weight": 2,
+      "patterns": [
+        "리딩방",
+        "오픈채팅",
+        "단톡",
+        "텔레그램",
+        "종목 추천",
+        "전문가",
+        "선생님"
+      ],
+      "explain": "익명 채팅방으로 유인해 조작된 수익 인증을 보여주는 방식이에요.",
+      "category_hint": "investment_scam",
+      "scenario_hint": "fake_trading_evidence_scam"
+    },
+    {
+      "id": "C05",
+      "label": "조작된 수익 인증",
+      "weight": 2,
+      "patterns": [
+        "수익 인증",
+        "수익률",
+        "인증샷",
+        "실시간 매매",
+        "AI 자동매매",
+        "자동매매"
+      ],
+      "explain": "화면과 인증샷은 얼마든지 조작할 수 있어요. 바람잡이가 함께 활동합니다.",
+      "category_hint": "investment_scam",
+      "scenario_hint": "fake_trading_evidence_scam"
+    },
+    {
+      "id": "C06",
+      "label": "초기 소액 출금 성공",
+      "weight": 2,
+      "patterns": [
+        "처음엔 출금",
+        "소액은 출금",
+        "처음에 받았",
+        "실제로 들어왔",
+        "입금이 됐"
+      ],
+      "explain": "초반에 실제로 돈이 들어오는 건 신뢰를 만들기 위한 미끼예요. 금액이 커지면 막힙니다.",
+      "category_hint": "investment_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "D01",
+      "label": "선입금 후 정산 구조",
+      "weight": 3,
+      "patterns": [
+        "선입금",
+        "먼저 결제",
+        "먼저 입금",
+        "구매 후 환급",
+        "결제하시면",
+        "공동구매"
+      ],
+      "explain": "정상적인 아르바이트는 일하기 전에 돈을 내라고 하지 않아요.",
+      "category_hint": "part_time_scam",
+      "scenario_hint": "fake_review_mission_scam"
+    },
+    {
+      "id": "D02",
+      "label": "연대 책임·죄책감 압박",
+      "weight": 3,
+      "patterns": [
+        "다들 하셨",
+        "팀 전체",
+        "조원",
+        "빠지시면",
+        "못 받으세요",
+        "다른 분들은"
+      ],
+      "explain": "단톡방 인원 상당수가 공범이에요. '나만 안 하면 피해준다'는 구조 자체가 설계된 압박이에요.",
+      "category_hint": "part_time_scam",
+      "scenario_hint": "fake_review_mission_scam"
+    },
+    {
+      "id": "D03",
+      "label": "소액 실지급 후 고액 유도",
+      "weight": 2,
+      "patterns": [
+        "3만원",
+        "소액",
+        "먼저 정산",
+        "미션 완료",
+        "1차 정산",
+        "리뷰 작성",
+        "좋아요"
+      ],
+      "explain": "처음 몇 건에 실제로 돈을 주는 건 검증됐다고 착각하게 만들기 위해서예요.",
+      "category_hint": "part_time_scam",
+      "scenario_hint": "fake_review_mission_scam"
+    },
+    {
+      "id": "D04",
+      "label": "대출 연계 제안",
+      "weight": 3,
+      "patterns": [
+        "대출",
+        "캐피탈",
+        "소액대출",
+        "빌려서라도",
+        "제휴사"
+      ],
+      "explain": "돈이 부족하다고 하니 대출을 연결해준다는 건 피해를 키우려는 단계예요.",
+      "category_hint": "part_time_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "D05",
+      "label": "통장·체크카드 대여 요구",
+      "weight": 3,
+      "patterns": [
+        "통장을 빌려",
+        "계좌를 빌려",
+        "체크카드",
+        "카드를 보내",
+        "명의를 빌려",
+        "수수료 드릴"
+      ],
+      "explain": "계좌를 빌려주면 피해자가 아니라 공범이 됩니다. 전자금융거래법 위반이에요.",
+      "category_hint": "part_time_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "E01",
+      "label": "만남·영상통화 지속 회피",
+      "weight": 3,
+      "patterns": [
+        "만나자고 하면",
+        "영상통화",
+        "얼굴",
+        "미루",
+        "사정이 생",
+        "출장",
+        "파병",
+        "해외 근무"
+      ],
+      "explain": "몇 주 넘게 대화했는데 실시간 확인을 계속 피한다면 신원 자체가 가짜일 가능성이 높아요.",
+      "category_hint": "romance_scam",
+      "scenario_hint": "psychological_control_scam"
+    },
+    {
+      "id": "E02",
+      "label": "익명 메신저로 이동 요구",
+      "weight": 2,
+      "patterns": [
+        "텔레그램",
+        "왓츠앱",
+        "라인으로",
+        "여기 말고",
+        "다른 앱으로",
+        "보안 때문"
+      ],
+      "explain": "플랫폼 밖 익명 메신저로 옮기자는 건 추적을 피하려는 목적이에요.",
+      "category_hint": "romance_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "E03",
+      "label": "너한테만 알려주는 정보",
+      "weight": 2,
+      "patterns": [
+        "너한테만",
+        "자기한테만",
+        "특별히",
+        "아는 형",
+        "지인이 운영",
+        "비밀인데"
+      ],
+      "explain": "친밀감을 이용해 투자를 권유하는 전형적인 전개예요.",
+      "category_hint": "romance_scam",
+      "scenario_hint": "romance_investment_scam"
+    },
+    {
+      "id": "E04",
+      "label": "통관비·긴급자금 요구",
+      "weight": 3,
+      "patterns": [
+        "통관비",
+        "관세",
+        "소포",
+        "선물을 보냈",
+        "급한 사정",
+        "병원비",
+        "카드가 막"
+      ],
+      "explain": "만난 적 없는 사람이 돈을 요구하는 시점이 곧 사기예요.",
+      "category_hint": "romance_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "F01",
+      "label": "지인 사칭 후 송금 요청",
+      "weight": 3,
+      "patterns": [
+        "엄마",
+        "아빠",
+        "폰이 고장",
+        "액정이 깨",
+        "컴퓨터로",
+        "대신 결제",
+        "대신 송금",
+        "급하게"
+      ],
+      "explain": "가족·친구를 사칭하는 경우예요. 반드시 기존에 알던 번호로 직접 통화해 확인하세요.",
+      "category_hint": "messenger_impersonation",
+      "scenario_hint": "proxy_purchase_scam"
+    },
+    {
+      "id": "F02",
+      "label": "인증번호 전달 요구",
+      "weight": 3,
+      "patterns": [
+        "인증번호",
+        "인증 코드",
+        "문자로 온 번호",
+        "코드 알려"
+      ],
+      "explain": "인증번호는 어떤 경우에도 남에게 알려주면 안 돼요. 그게 곧 계정 열쇠예요.",
+      "category_hint": "messenger_impersonation",
+      "scenario_hint": null
+    },
+    {
+      "id": "F03",
+      "label": "신분증·통장 사진 요구",
+      "weight": 3,
+      "patterns": [
+        "신분증",
+        "주민등록증",
+        "면허증",
+        "통장 사진",
+        "계좌번호 사진"
+      ],
+      "explain": "신분증 사진은 명의도용과 비대면 대출에 그대로 쓰입니다.",
+      "category_hint": null,
+      "scenario_hint": null
+    },
+    {
+      "id": "F04",
+      "label": "계정 보안 경고 위장",
+      "weight": 2,
+      "patterns": [
+        "비정상 로그인",
+        "계정이 정지",
+        "로그인 확인",
+        "본인 확인 필요",
+        "계정 보호"
+      ],
+      "explain": "보안 경고를 가장해 계정을 탈취하는 수법이에요.",
+      "category_hint": "smishing",
+      "scenario_hint": null
+    },
+    {
+      "id": "G01",
+      "label": "가짜 안전결제 링크",
+      "weight": 3,
+      "patterns": [
+        "안전결제",
+        "안전거래",
+        "결제 링크",
+        "링크로 결제",
+        "에스크로"
+      ],
+      "explain": "플랫폼 밖에서 보내주는 안전결제 링크는 대부분 가짜예요.",
+      "category_hint": "secondhand_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "G02",
+      "label": "예금주 불일치",
+      "weight": 3,
+      "patterns": [
+        "예금주가 다",
+        "이름이 달",
+        "가족 계좌",
+        "명의가 다"
+      ],
+      "explain": "대화 상대와 예금주 이름이 다르면 대포통장일 가능성이 높아요.",
+      "category_hint": "secondhand_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "G03",
+      "label": "플랫폼 밖 거래 유도",
+      "weight": 2,
+      "patterns": [
+        "카톡으로",
+        "직거래로 하",
+        "채팅 나가서",
+        "문자로 하"
+      ],
+      "explain": "플랫폼을 벗어나면 분쟁 시 보호를 못 받아요.",
+      "category_hint": "secondhand_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "G04",
+      "label": "시세보다 낮은 가격 + 재촉",
+      "weight": 2,
+      "patterns": [
+        "시세보다",
+        "싸게",
+        "급처",
+        "오늘까지",
+        "빨리 결정",
+        "다른 분이"
+      ],
+      "explain": "가격이 지나치게 싸면서 재촉한다면 판단할 시간을 주지 않으려는 거예요.",
+      "category_hint": "secondhand_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "H01",
+      "label": "대출 전 선입금 요구",
+      "weight": 3,
+      "patterns": [
+        "보증료",
+        "보증보험",
+        "신용등급 세탁",
+        "전산작업비",
+        "선납금",
+        "먼저 상환"
+      ],
+      "explain": "정상 금융회사는 어떤 명목으로도 대출 전에 돈을 요구하지 않아요.",
+      "category_hint": "loan_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "H02",
+      "label": "저금리 대환대출 유인",
+      "weight": 2,
+      "patterns": [
+        "저금리",
+        "대환대출",
+        "정부지원",
+        "특별한도",
+        "승인됐"
+      ],
+      "explain": "먼저 연락 와서 저금리 대출을 권하는 건 대출빙자형의 시작이에요.",
+      "category_hint": "loan_scam",
+      "scenario_hint": null
+    },
+    {
+      "id": "I01",
+      "label": "피해금 회수 대행 제안",
+      "weight": 3,
+      "patterns": [
+        "회수",
+        "복구",
+        "되찾아",
+        "환수",
+        "성공보수",
+        "착수금"
+      ],
+      "explain": "피해자 명단을 노린 2차 사기예요. 공식 절차 외에는 이용하지 마세요.",
+      "category_hint": "other_known_scam",
+      "scenario_hint": null
+    }
+  ],
+  "negative_signals": [
+    {
+      "id": "N01",
+      "label": "직거래·실물 확인",
+      "patterns": [
+        "직거래",
+        "만나서",
+        "실물 확인",
+        "보고 결정",
+        "현장에서"
+      ],
+      "explain": "직접 만나 실물을 확인하는 절차는 안전한 방식이에요."
+    },
+    {
+      "id": "N02",
+      "label": "공식 앱·창구 이용",
+      "patterns": [
+        "공식 앱",
+        "앱에서 직접",
+        "지점 방문",
+        "창구",
+        "고객센터에 직접"
+      ],
+      "explain": "공식 채널을 통한 거래는 위험이 낮아요."
+    },
+    {
+      "id": "N03",
+      "label": "선입금 요구 없음",
+      "patterns": [
+        "미리 보내달라는 말은 없",
+        "선입금 요구는 없",
+        "돈 얘기는 없"
+      ],
+      "explain": "선입금 요구가 없다는 점은 긍정적인 신호예요."
+    },
+    {
+      "id": "N04",
+      "label": "단순 정보 문의",
+      "patterns": [
+        "궁금해서",
+        "알아보려고",
+        "요즘 어떤",
+        "예방하려고",
+        "공부"
+      ],
+      "explain": "피해 상황이 아니라 정보를 찾는 문의로 보여요."
+    }
+  ],
+  "damage_stages": [
+    {
+      "id": "transferred",
+      "label": "송금 후",
+      "priority": 1,
+      "patterns": [
+        "보냈",
+        "송금했",
+        "이체했",
+        "입금했",
+        "결제했",
+        "돈이 나갔"
+      ],
+      "headline": "지금 가장 급한 건 지급정지예요"
+    },
+    {
+      "id": "app_installed",
+      "label": "앱 설치 후",
+      "priority": 2,
+      "patterns": [
+        "앱을 깔",
+        "설치했",
+        "다운받았",
+        "눌렀",
+        "클릭했"
+      ],
+      "headline": "휴대폰이 조작되고 있을 수 있어요"
+    },
+    {
+      "id": "info_given",
+      "label": "개인정보 제공 후",
+      "priority": 3,
+      "patterns": [
+        "알려줬",
+        "보냈어요 사진",
+        "신분증 보",
+        "계좌번호 알려",
+        "인증번호 알려"
+      ],
+      "headline": "명의도용을 먼저 막아야 해요"
+    },
+    {
+      "id": "initial",
+      "label": "접촉 초기",
+      "priority": 4,
+      "patterns": [],
+      "headline": "아직 늦지 않았어요 — 지금 끊어내면 됩니다"
+    }
+  ],
+  "rules": {
+    "verdict": [
+      {
+        "id": "suspected",
+        "label": "사기 의심",
+        "condition": "강(3) 시그널 1개 이상 OR 중(2) 시그널 2개 이상",
+        "min_strong": 1,
+        "min_medium": 2
+      },
+      {
+        "id": "insufficient",
+        "label": "근거 부족",
+        "condition": "약(1) 시그널만 있거나, 중(2) 1개만 있는 경우",
+        "min_strong": 0,
+        "min_medium": 1
+      },
+      {
+        "id": "unlikely",
+        "label": "사기 가능성 낮음",
+        "condition": "시그널 0개 또는 안심 신호가 우세한 경우",
+        "min_strong": 0,
+        "min_medium": 0
+      }
+    ],
+    "note": "안심 신호(N) 1개당 중(2) 시그널 1개를 상쇄한다. 단, 강(3) 시그널은 상쇄하지 않는다."
+  },
+  "followup_questions": [
+    {
+      "slot": "money_sent",
+      "missing_reason": "송금 여부가 확인되지 않았어요",
+      "question": "혹시 이미 돈을 보내셨나요? 보내셨다면 대략 몇 시쯤이었는지도 알려주세요. 시간이 가장 중요하거든요."
+    },
+    {
+      "slot": "app_installed",
+      "missing_reason": "앱 설치 여부가 확인되지 않았어요",
+      "question": "통화하거나 문자 받으면서 앱을 설치하거나 링크를 누른 적이 있으신가요?"
+    },
+    {
+      "slot": "info_given",
+      "missing_reason": "개인정보 제공 여부가 확인되지 않았어요",
+      "question": "계좌번호, 인증번호, 신분증 사진 같은 걸 알려주신 게 있나요? 없다면 그것도 알려주세요."
+    },
+    {
+      "slot": "who_contacted",
+      "missing_reason": "상대가 누구를 자처했는지 확인되지 않았어요",
+      "question": "상대방이 어디 소속이라고 하던가요? 기관 이름이나 회사 이름이 있었는지 기억나시는 대로요."
+    },
+    {
+      "slot": "what_requested",
+      "missing_reason": "상대의 요구 내용이 확인되지 않았어요",
+      "question": "상대가 구체적으로 뭘 해달라고 했나요? 송금, 앱 설치, 정보 제공 중에 있었는지요."
+    },
+    {
+      "slot": "channel",
+      "missing_reason": "접촉 경로가 확인되지 않았어요",
+      "question": "처음에 어떻게 연락이 왔나요? 전화인지 문자인지, SNS나 메신저인지요."
+    },
+    {
+      "slot": "exact_words",
+      "missing_reason": "상대가 사용한 표현이 확인되지 않았어요",
+      "question": "상대가 했던 말 중에 기억나는 문장이 있으면 그대로 적어주세요. 표현만으로 판별되는 경우가 많아요."
+    }
+  ],
+  "response_sections": {
+    "suspected": {
+      "transferred": [
+        "공감_1문장",
+        "위험신호_근거",
+        "즉시조치_지급정지",
+        "단계확인_질문",
+        "대응도구"
+      ],
+      "app_installed": [
+        "공감_1문장",
+        "위험신호_근거",
+        "즉시조치_기기격리",
+        "단계확인_질문",
+        "대응도구"
+      ],
+      "info_given": [
+        "공감_1문장",
+        "위험신호_근거",
+        "즉시조치_명의보호",
+        "단계확인_질문",
+        "대응도구"
+      ],
+      "initial": [
+        "공감_1문장",
+        "위험신호_근거",
+        "즉시조치_차단",
+        "유사사례",
+        "단계확인_질문",
+        "대응도구"
+      ]
+    },
+    "insufficient": {
+      "*": [
+        "공감_1문장",
+        "현재판단_보류명시",
+        "부족한근거_설명",
+        "보충질문_최대2개",
+        "임시권고_보류"
+      ]
+    },
+    "unlikely": {
+      "*": [
+        "안심_안내",
+        "판단근거_설명",
+        "그래도확인할점",
+        "재문의_안내"
+      ]
+    }
+  },
+  "section_spec": {
+    "공감_1문장": {
+      "고정": false,
+      "규칙": "한 문장만. 감정 반영은 1회로 제한하고 반복 금지."
+    },
+    "위험신호_근거": {
+      "고정": true,
+      "규칙": "matched_signals의 explain을 그대로 출력. LLM이 새로 쓰지 않는다."
+    },
+    "즉시조치_지급정지": {
+      "고정": true,
+      "규칙": "112 또는 거래은행 지급정지가 반드시 첫 항목."
+    },
+    "즉시조치_기기격리": {
+      "고정": true,
+      "규칙": "비행기모드 → 다른 폰으로 은행 연락 → 캡처 → 초기화 순서 고정."
+    },
+    "즉시조치_명의보호": {
+      "고정": true,
+      "규칙": "pd.fss.or.kr, payinfo.or.kr, msafer.or.kr 3개 링크 고정."
+    },
+    "즉시조치_차단": {
+      "고정": true,
+      "규칙": "연락 차단 / 송금·정보제공·앱설치 금지 2개 항목 고정."
+    },
+    "유사사례": {
+      "고정": true,
+      "규칙": "DB 검색 결과 상위 2건. 없으면 섹션 생략."
+    },
+    "단계확인_질문": {
+      "고정": true,
+      "규칙": "'이런 단계로 보이는데 맞나요?' 형태로 확인 후 대응도구 노출."
+    },
+    "대응도구": {
+      "고정": true,
+      "규칙": "전화 대본 / 요약 리포트 / 증거 체크리스트 3종 고정."
+    },
+    "현재판단_보류명시": {
+      "고정": true,
+      "규칙": "'지금 정보로는 확정할 수 없어요'를 반드시 명시."
+    },
+    "부족한근거_설명": {
+      "고정": true,
+      "규칙": "FOLLOWUP의 missing_reason을 그대로 출력."
+    },
+    "보충질문_최대2개": {
+      "고정": true,
+      "규칙": "FOLLOWUP에서 최대 2개만. 3개 이상 묻지 않는다."
+    },
+    "임시권고_보류": {
+      "고정": true,
+      "규칙": "확정 전까지 송금·정보제공 보류를 권고."
+    },
+    "안심_안내": {
+      "고정": true,
+      "규칙": "'현재 내용만으로는 사기 가능성이 낮아 보여요' 고정 문구."
+    },
+    "판단근거_설명": {
+      "고정": true,
+      "규칙": "안심 신호(N)의 explain 출력."
+    },
+    "그래도확인할점": {
+      "고정": true,
+      "규칙": "해당 카테고리의 기본 확인사항 1~2개."
+    },
+    "재문의_안내": {
+      "고정": true,
+      "규칙": "'개인정보·입금·링크 요구가 생기면 다시 확인하세요' 고정 문구."
+    }
+  }
+}
