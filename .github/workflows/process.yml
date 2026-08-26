@@ -1,0 +1,54 @@
+name: Structure And Embed Scam Articles
+
+on:
+  schedule:
+    # KST 23:20
+    - cron: "20 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scam-data-pipeline
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+
+    env:
+      UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
+      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+      QDRANT_URL: ${{ secrets.QDRANT_URL }}
+      QDRANT_COLLECTION: ${{ secrets.QDRANT_COLLECTION || '0818' }}
+      QDRANT_VECTOR_SIZE: ${{ secrets.QDRANT_VECTOR_SIZE || '4096' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Structure collected articles
+        run: python scam_data_pipeline.py structure --verbose
+
+      - name: Commit structured data
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/structured_scam_articles.jsonl
+          if git diff --cached --quiet; then
+            echo "No new structured articles to commit."
+          else
+            git commit -m "Structure scam articles"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Embed and upload to Qdrant
+        run: python scam_data_pipeline.py embed --verbose
