@@ -1,338 +1,312 @@
-"""
-================================================================================
-services.py — LLM 판단 로직 모음 (전체 워크플로우)
-================================================================================
+"""LLM 호출 / 진단 로직 / 대응 가이드·도구 생성.
 
-이 파일은 "판단"만 담당합니다. 화면(어떻게 보여줄지, 어느 함수를 언제
-부를지)은 pages_files/chat.py가 담당합니다.
-
-■ 플로우차트의 각 노드가 아래 함수 중 무엇에 대응하는지
---------------------------------------------------------------------------------
-  플로우차트 노드                        →  함수명
---------------------------------------------------------------------------------
-  사기 의심 여부 진단                     →  classify_scam()
-  피해 단계 진단                          →  classify_stage()
-  접촉 초기 대응 가이드                    →  guide_contact_early()
-  개인정보 보호 대응 가이드                 →  guide_personal_info()
-  기기/계정 보호 가이드                    →  guide_device_account()
-  금융 피해 대응 가이드                    →  guide_financial_loss()
-  금융기관/경찰 신고용 전화 대본 만들기      →  generate_report_script()
-  피해 상황 요약 리포트 만들기              →  generate_damage_report()
-  증거 보존 체크리스트 제공                 →  generate_evidence_checklist()
---------------------------------------------------------------------------------
-
-■ 왜 "피해 단계 판단"과 "가이드 생성"을 분리했는가 (이전 버전과 달라진 점)
-    이전 버전은 classify_stage_and_guide() 하나가 단계 판단과 가이드
-    생성을 동시에 처리했습니다. 이번엔 사용자 요청에 따라 플로우차트
-    그림 그대로, 판단(1개 함수)과 4가지 단계별 가이드(4개 함수)를
-    완전히 분리했습니다.
-
-    장점: 각 가이드 프롬프트를 독립적으로 수정/튜닝할 수 있음
-          (예: "금융 피해" 가이드만 지급정지 절차를 더 상세히 하고 싶을 때,
-           그 함수만 고치면 되고 다른 가이드에는 영향 없음)
-    단점: LLM 호출이 한 번 더 늘어남 (단계 판단 1회 + 가이드 1회 = 총 2회)
-          → 속도가 아주 살짝 느려지지만, 프롬프트 관리 편의성이 더 큼
-
-■ 프롬프트를 수정하고 싶을 때
-    각 함수 안의 system_prompt 변수에 들어있는 긴 문자열 부분만 고치면 됩니다.
-    JSON 형식(키 이름)은 chat.py가 그대로 참조하니 바꾸지 마세요.
-    (키 이름을 바꾸고 싶다면 chat.py의 해당 부분도 함께 고쳐야 합니다.)
-================================================================================
+Upstage Solar Pro(solar-pro4)를 OpenAI 호환 chat completions 형식으로 호출한다.
+전체 흐름은 docs/PIPELINE (1).md 명세를 따른다: suspicion → damage_stage → guided.
 """
 
-from openai import OpenAI
-import os
+from __future__ import annotations
+
 import json
+import os
+import re
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-MODEL_NAME = "gpt-4o-mini"
+import requests
+
+import mock_data as data
+
+UPSTAGE_URL = "https://api.upstage.ai/v1/chat/completions"
+MODEL = "solar-pro4"
 
 
-# =============================================================================
-# 공통 헬퍼: JSON 강제 호출
-# =============================================================================
-# 아래 모든 함수가 "시스템 프롬프트 + 사용자 텍스트를 보내고 JSON을 받는"
-# 같은 패턴을 반복하므로, 중복을 줄이기 위해 공통 함수로 뺐습니다.
-# (프롬프트 자체는 각 함수 안에 그대로 있으니, 프롬프트 수정에는 영향 없습니다.)
-def _call_llm_json(system_prompt: str, user_text: str, temperature: float = 0.3) -> dict:
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ],
-        response_format={"type": "json_object"},
-        temperature=temperature,
+class MissingUpstageAPIError(RuntimeError):
+    """Raised when the Upstage API key is not available in the environment."""
+
+
+def contains_sensitive_info(text: str) -> bool:
+    """주민번호 패턴이나 비밀번호/인증번호 + 숫자 조합이 보이면 True."""
+    if re.search(r"\d{6}-?\d{7}", text):
+        return True
+    if any(k in text for k in ("비밀번호", "인증번호", "otp", "OTP")) and re.search(r"\d{4,}", text):
+        return True
+    return False
+
+
+def call_llm(system: str, messages: list[dict], temperature: float = 0.3) -> str:
+    api_key = os.getenv("UPSTAGE_API")
+    if not api_key:
+        raise MissingUpstageAPIError("UPSTAGE_API 환경변수가 필요합니다.")
+
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "system", "content": system}] + messages,
+        "temperature": temperature,
+    }
+    r = requests.post(
+        UPSTAGE_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=payload,
+        timeout=30,
     )
-    return json.loads(response.choices[0].message.content)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
 
 
-# =============================================================================
-# 1) classify_scam()
-# 플로우차트 노드 → "사기 의심 여부 진단"
-# =============================================================================
-def classify_scam(conversation_text: str) -> dict:
-    """
-    사용자 대화를 보고 사기 의심 여부를 판단합니다.
+def parse_json_safe(text: str, fallback: dict) -> dict:
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return fallback
+    try:
+        return json.loads(m.group())
+    except json.JSONDecodeError:
+        return fallback
 
-    Returns:
-        {
-          "verdict": "insufficient" | "low_risk" | "suspected",
-          "follow_up_question": str | None,   # verdict가 insufficient일 때만
-          "safe_message": str | None          # verdict가 low_risk일 때만
+
+# ---------------------------------------------------------------------------
+# 분류 함수 ① — 사기 의심 여부
+# ---------------------------------------------------------------------------
+
+SUSPICION_SYSTEM = """당신은 금융사기 위험 신호를 분석하는 보조 도구다.
+사용자가 겪고 있는 상황 설명을 읽고 아래 JSON만 출력하라. 다른 텍스트 금지.
+
+{"label": "의심" | "낮음" | "근거부족",
+ "confidence": 0~100 정수,
+ "signals": ["감지된 위험 신호를 짧은 한국어 구로"],
+ "follow_up": "근거부족일 때 사용자에게 물어볼 질문 1개 (다른 label이면 빈 문자열)"}
+
+판정 기준:
+- "의심": 다음 신호가 하나라도 명확하면. 선입금·보증금 요구 / 개인정보·신분증·계좌 요구 /
+  수사기관·금융기관 사칭 정황 / 비밀 유지 강요 / 외부 메신저(텔레그램 등) 이동 유도 /
+  출금 거부·추가 입금 요구 / 검증 불가한 고수익 약속 / 앱 설치 유도
+- "낮음": 상황이 충분히 설명됐고 위 신호가 없으면
+- "근거부족": 정보가 부족해 판단할 수 없으면. follow_up에는 판단에 가장 결정적인
+  것 하나만 질문 (예: "혹시 상대방이 돈이나 개인정보를 요구한 적 있나요?")
+
+절대 규칙: "사기가 확실하다"는 단정 금지. signals는 관찰된 사실만 기술."""
+
+
+def classify_suspicion(chat_messages: list[dict]) -> dict:
+    fallback = {
+        "label": "근거부족",
+        "confidence": 0,
+        "signals": [],
+        "follow_up": "상황을 조금 더 자세히 알려주실 수 있나요? 상대방이 뭐라고 했는지, 어떤 요구를 받았는지 궁금해요.",
+    }
+    raw = call_llm(SUSPICION_SYSTEM, chat_messages)
+    result = parse_json_safe(raw, fallback)
+    if result.get("label") not in ("의심", "낮음", "근거부족"):
+        return fallback
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 분류 함수 ② — 피해 단계
+# ---------------------------------------------------------------------------
+
+STAGE_SYSTEM = """당신은 금융사기 피해 진행 단계를 분류하는 보조 도구다.
+대화를 읽고 아래 JSON만 출력하라. 다른 텍스트 금지.
+
+{"stage": "접촉초기" | "개인정보제공" | "링크클릭앱설치" | "입금송금" | "근거부족",
+ "follow_up": "근거부족일 때 물어볼 질문 1개 (아니면 빈 문자열)"}
+
+단계 정의 (해당되는 가장 진행된 단계 하나를 고른다):
+- "입금송금": 이미 돈을 보냈거나 이체·환전을 완료함 → 가장 우선 판정
+- "링크클릭앱설치": 링크를 눌렀거나 앱·프로그램을 설치함 (돈은 아직 안 보냄)
+- "개인정보제공": 신분증·계좌번호·비밀번호 등 개인정보를 넘김 (링크/입금은 아직)
+- "접촉초기": 연락만 받았고 아직 아무것도 제공하지 않음
+- "근거부족": 위를 판단할 정보가 없음. follow_up 예:
+  "혹시 지금까지 돈을 보내거나, 링크를 누르거나, 개인정보를 알려준 적이 있나요?"
+"""
+
+
+def classify_damage_stage(chat_messages: list[dict]) -> dict:
+    fallback = {
+        "stage": "근거부족",
+        "follow_up": "혹시 지금까지 돈을 보내거나, 링크를 누르거나, 개인정보를 알려주신 적이 있나요?",
+    }
+    raw = call_llm(STAGE_SYSTEM, chat_messages)
+    result = parse_json_safe(raw, fallback)
+    if result.get("stage") not in ("접촉초기", "개인정보제공", "링크클릭앱설치", "입금송금", "근거부족"):
+        return fallback
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 대응 가이드 — 고정 템플릿(mock_data.GUIDE_TEMPLATES) + LLM 공감 인트로
+# ---------------------------------------------------------------------------
+
+GUIDE_INTRO_SYSTEM = """사용자의 상황에 공감하는 문장 1~2개를 한국어로 써라.
+- 사용자를 탓하지 말 것. "당황스러우셨겠어요" 같은 톤
+- 사기 확정 단정 금지. "위험 신호가 보여요" 수준까지만
+- 이어서 구체적 행동 안내가 나올 것이므로, 행동 지시는 쓰지 말 것
+- 2문장 이내, 순수 텍스트만"""
+
+
+def make_guide(stage: str, chat_messages: list[dict]) -> str:
+    intro = call_llm(GUIDE_INTRO_SYSTEM, chat_messages, temperature=0.7)
+    return intro.strip() + "\n\n" + data.GUIDE_TEMPLATES[stage]
+
+
+# ---------------------------------------------------------------------------
+# 대응 도구 3종 — 버튼 클릭 시에만 생성
+# ---------------------------------------------------------------------------
+
+TOOL_SYSTEMS = {
+    "call_script": """사용자가 은행/경찰에 신고 전화할 때 그대로 읽을 수 있는 대본을 써라.
+형식: ① 첫마디 (본인 소개 + 용건 한 문장) ② 피해 내용 설명 (대화에서 파악된
+사실만: 언제, 어떤 경로로, 무엇을 요구받았고, 무엇을 제공/송금했는지)
+③ 요청 사항 (지급정지/피해구제 등 단계에 맞게) ④ 상담원이 물어볼 만한 질문과 답
+대화에 없는 사실(금액, 날짜, 계좌번호)은 지어내지 말고 [직접 입력] 으로 표시하라.""",
+    "report": """피해 상황 요약 리포트를 써라. 신고·상담 시 제출용.
+형식: 사건 개요(3줄 이내) / 시간 순 경과 / 상대방 정보(알려진 것만) /
+제공·송금한 것 / 감지된 위험 신호 목록
+대화에 없는 정보는 [확인 필요]로 표시. 추측 금지.""",
+    "checklist": """증거 보존 체크리스트를 써라. 체크박스(- [ ]) 형식.
+항목: 대화 캡처(날짜 보이게), 상대 프로필/계정 캡처, 송금 내역 캡처,
+통화 녹음 백업, 상대 계좌·전화번호 기록, 원본 삭제 금지 안내
+사용자 상황(피해 단계)에 맞는 항목 위주로 6~10개.""",
+}
+
+
+def make_tool(tool: str, stage: str, chat_messages: list[dict]) -> str:
+    context = chat_messages + [
+        {"role": "user", "content": f"(시스템 참고: 판정된 피해 단계는 '{stage}')"}
+    ]
+    return call_llm(TOOL_SYSTEMS[tool], context, temperature=0.4)
+# ======================================================================
+# 채팅 판단 로직 보강 — 아래 블록을 services.py 맨 끝에 붙여넣으세요
+# 작성: 세빈 / 2026.08
+#
+# 기존 classify_suspicion(LLM 판정)은 그대로 두고, 그 앞단에
+# 규칙 기반 판정을 얹습니다. 시그널이 잡히면 규칙이 최종 판정하고,
+# 아무것도 안 잡힐 때만 LLM 판정을 참고합니다.
+# → 같은 입력이면 항상 같은 label이 나옵니다.
+# ======================================================================
+
+import mock_data as data
+
+
+def _hit(text: str, patterns: list[str]) -> bool:
+    return any(p in text for p in patterns)
+
+
+def detect_signals(chat_messages: list[dict]) -> dict:
+    """대화 전체에서 사기 시그널 / 안심 신호를 찾아낸다. LLM 호출 없음."""
+    text = " ".join(m["content"] for m in chat_messages if m["role"] == "user")
+    text = text + " " + text.replace(" ", "")      # 띄어쓰기 편차 흡수
+
+    matched = [s for s in data.SCAM_SIGNALS if _hit(text, s["patterns"])]
+    calmers = [n for n in data.SAFE_SIGNALS if _hit(text, n["patterns"])]
+
+    strong = sum(1 for s in matched if s["weight"] == 3)
+    medium = max(0, sum(1 for s in matched if s["weight"] == 2) - len(calmers))
+
+    if strong >= 1 or medium >= 2:
+        label = "의심"
+    elif medium == 1:
+        label = "근거부족"
+    else:
+        label = "낮음"
+
+    return {
+        "label": label,
+        "matched": sorted(matched, key=lambda x: -x["weight"]),
+        "calmers": calmers,
+        "strong": strong,
+        "medium": medium,
+        "has_any": bool(matched),
+    }
+
+
+def classify_suspicion_hybrid(chat_messages: list[dict]) -> dict:
+    """규칙 우선 판정. 시그널이 하나도 없을 때만 LLM 판정을 참고한다."""
+    rule = detect_signals(chat_messages)
+
+    if rule["has_any"]:
+        return {
+            "label": rule["label"],
+            "confidence": min(100, rule["strong"] * 40 + rule["medium"] * 20),
+            "signals": [s["label"] for s in rule["matched"]],
+            "signal_ids": [s["id"] for s in rule["matched"]],
+            "explains": [s["explain"] for s in rule["matched"]],
+            "calmers": [n["explain"] for n in rule["calmers"]],
+            "follow_up": build_followup(rule) if rule["label"] == "근거부족" else "",
+            "source": "rule",
         }
-    """
-    system_prompt = """
-너는 청년층 금융사기 예방을 돕는 AI 상담사야. 서비스 이름은 "든든이"이고,
-판단하지 않고 편하게 물어보는 친구 같은 톤을 유지해야 해.
 
-【 규칙 】
-- 사용자를 다그치거나 겁주지 마. "~일 가능성이 있어요" 같은 부드러운 표현을 써.
-- 절대 확정적으로 "사기입니다"라고 단정하지 마.
-- 정보가 부족하면 짧고 구체적인 질문 하나만 해. (한 번에 여러 개 묻지 말 것)
-
-【 판단 기준 】
-1. insufficient (정보 부족): 상황 파악이 안 될 만큼 대화가 짧거나 모호함
-2. low_risk (사기 가능성 낮음): 선입금 요구, 개인정보 요구, 긴급함을 강조하는
-   압박, 공식 절차와 다른 채널 유도 등 사기 패턴이 뚜렷하지 않음
-3. suspected (사기 의심): 위 패턴 중 하나라도 뚜렷하게 보임
-
-【 응답 형식 - JSON만, 다른 텍스트 금지 】
-{
-  "verdict": "insufficient" 또는 "low_risk" 또는 "suspected",
-  "follow_up_question": verdict가 insufficient일 때만 질문 작성, 아니면 null,
-  "safe_message": verdict가 low_risk일 때만 안심 안내 작성, 아니면 null
-}
-
-safe_message는 반드시 아래 두 요소를 포함해:
-1) "지금 내용만으로는 사기 가능성이 낮아 보여요" 같은 안심 문구
-2) "개인정보나 입금, 링크 클릭을 요구받으면 다시 알려주세요" 같은 재확인 권유
-"""
-    return _call_llm_json(system_prompt, conversation_text)
-
-
-# =============================================================================
-# 2) classify_stage()
-# 플로우차트 노드 → "피해 단계 진단"
-# =============================================================================
-def classify_stage(conversation_text: str) -> dict:
-    """
-    classify_scam()에서 "suspected" 판정 이후 호출됩니다.
-    가이드는 만들지 않고, 오직 "지금 어느 단계인지"만 판단합니다.
-    (가이드 생성은 아래 guide_*() 함수들이 각각 따로 담당)
-
-    Returns:
-        {
-          "has_enough_info": bool,
-          "follow_up_question": str | None,
-          "stage": "접촉초기" | "개인정보제공" | "기기계정" | "금융피해" | None
+    # 시그널 0개 — 안심 신호가 있으면 '낮음', 없으면 LLM에 맡김
+    if rule["calmers"]:
+        return {
+            "label": "낮음", "confidence": 0, "signals": [], "signal_ids": [],
+            "explains": [], "calmers": [n["explain"] for n in rule["calmers"]],
+            "follow_up": "", "source": "rule",
         }
-    """
-    system_prompt = """
-너는 청년층 금융사기 대응을 돕는 AI 상담사야. 이미 사용자의 상황이 사기로
-의심된다고 판단된 상태야. 지금 사용자가 피해의 어느 단계에 있는지만 판단해.
-(대응 방법은 아직 알려주지 마. 단계 판단만 하는 게 네 역할이야.)
 
-【 네 가지 단계 정의 】
-- "접촉초기": 의심스러운 연락/제안을 받았지만 아직 아무것도 안 준 상태
-- "개인정보제공": 이름, 주민번호, 계좌번호, 인증번호 등을 이미 알려준 상태
-- "기기계정": 의심스러운 링크를 클릭했거나 앱을 설치한 상태
-- "금융피해": 이미 돈을 보낸 상태 (일부라도 보냈으면 이 단계)
-
-※ 여러 단계가 겹치면 가장 심각한 단계로 판단해.
-   심각도 순서: 금융피해 > 기기계정 > 개인정보제공 > 접촉초기
-
-정보가 부족하면 has_enough_info를 false로 하고,
-"혹시 돈을 보내셨나요?" 같은 구체적인 질문 하나만 해.
-
-【 응답 형식 - JSON만 】
-{
-  "has_enough_info": true 또는 false,
-  "follow_up_question": has_enough_info가 false일 때만 작성, 아니면 null,
-  "stage": 판단됐으면 "접촉초기"/"개인정보제공"/"기기계정"/"금융피해" 중 하나, 아니면 null
-}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
+    llm = classify_suspicion(chat_messages)
+    llm.update({"signal_ids": [], "explains": [], "calmers": [], "source": "llm"})
+    if llm["label"] == "근거부족" and not llm.get("follow_up"):
+        llm["follow_up"] = data.FOLLOWUP_QUESTIONS[0]["question"]
+    return llm
 
 
-# =============================================================================
-# 3) 단계별 가이드 함수 4개
-# 플로우차트 노드 → "접촉 초기/개인정보/기기계정/금융피해 대응 가이드" 각각
-# =============================================================================
-# 공통 응답 형식 (4개 함수 모두 동일):
-# {
-#   "summary": "상황 한 줄 요약",
-#   "priority_actions": ["가장 급한 행동", "그 다음 행동", ...],
-#   "explanation": "왜 이 조치가 필요한지 설명"
-# }
-# 각 함수의 system_prompt만 다르게 튜닝되어 있습니다.
-# -----------------------------------------------------------------------------
+def build_followup(rule: dict) -> str:
+    """근거 부족 시 — 무엇이 부족한지 + 보충 질문. 최대 2개."""
+    ids = {s["id"] for s in rule["matched"]}
+    picked = [
+        q for q in data.FOLLOWUP_QUESTIONS
+        if not (set(data.FOLLOWUP_SLOT_FILLED_BY.get(q["slot"], [])) & ids)
+    ][:2]
+    if not picked:
+        picked = data.FOLLOWUP_QUESTIONS[:1]
 
-_GUIDE_JSON_FORMAT = """
-【 응답 형식 - JSON만 】
-{
-  "summary": "지금 상황을 한 문장으로 요약",
-  "priority_actions": ["가장 급한 행동", "그 다음 행동", "..."],
-  "explanation": "왜 이 조치들이 필요한지 부드럽게 설명하는 문단"
-}
-priority_actions는 반드시 "가장 급한 것부터" 순서대로. 한 항목당 한 문장으로 간결하게.
-"""
+    lines = ["지금 정보만으로는 사기인지 확정하기 어려워요.", ""]
+    lines += [f"- {q['reason']}" for q in picked]
+    lines += ["", "아래만 알려주시면 더 정확하게 봐드릴 수 있어요.", ""]
+    lines += [f"{i}. {q['question']}" for i, q in enumerate(picked, 1)]
+    lines += ["", "확인되기 전까지는 송금이나 개인정보 제공은 잠시 보류해 주세요."]
+    return "\n".join(lines)
 
 
-def guide_contact_early(conversation_text: str) -> dict:
-    """플로우차트: 접촉 초기 대응 가이드 (아직 아무 피해 없음, 예방 중심)"""
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야. 판단하지 말고 차분하게 안내해.
-
-사용자는 의심스러운 연락/제안을 받았지만 아직 아무것도 주지 않은 "접촉 초기"
-단계야. 지금은 예방이 핵심이야.
-
-【 우선순위 원칙 】
-1. 추가 연락(전화, 문자, 메신저)에 더 이상 응하지 않기
-2. 상대방이 알려준 번호 말고, 공식 채널(공식 대표번호, 공식 앱)로 직접 재확인하기
-3. 어떤 경우에도 지금 이 상태에서 돈을 보내거나 개인정보를 주지 않기
-{_GUIDE_JSON_FORMAT}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
+def build_reassurance(rule: dict) -> str:
+    """사기 가능성 낮음 — 안심 안내 정형화."""
+    reason = (
+        " ".join(rule["calmers"][0:1]) if rule.get("calmers")
+        else data.REASSURANCE_DEFAULT_REASON
+    )
+    if isinstance(reason, dict):
+        reason = reason.get("explain", data.REASSURANCE_DEFAULT_REASON)
+    return data.REASSURANCE_TEMPLATE.format(reason=reason)
 
 
-def guide_personal_info(conversation_text: str) -> dict:
-    """플로우차트: 개인정보 보호 대응 가이드"""
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야. 판단하지 말고 차분하게 안내해.
-
-사용자는 이름, 주민번호, 계좌번호, 인증번호 등 개인정보를 이미 상대방에게
-알려준 상태야. 지금은 명의도용/정보유출 대응이 핵심이야.
-
-【 우선순위 원칙 】
-1. 명의도용 확인 서비스(예: 엠세이퍼)로 본인 명의 개설 내역 확인하기
-2. 알려준 계좌나 카드가 있다면 즉시 비밀번호/보안카드 변경 또는 정지 문의
-3. 추가로 인증번호나 정보를 더 요구받으면 절대 응하지 않기
-{_GUIDE_JSON_FORMAT}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
+def refund_eligible(signal_ids: list[str]):
+    """지급정지(통신사기피해환급법) 적용 가능 여부. True / False / None"""
+    vals = {data.REFUND_ELIGIBLE_BY_GROUP.get(sid[0]) for sid in signal_ids}
+    if False in vals:
+        return False
+    if True in vals:
+        return True
+    return None
 
 
-def guide_device_account(conversation_text: str) -> dict:
-    """플로우차트: 기기/계정 보호 가이드"""
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야. 판단하지 말고 차분하게 안내해.
+def build_suspicion_report(result: dict, stage: str, similar_cases: list[dict] | None = None) -> str:
+    """사기 의심 — 근거 설명 + 유사 사례 + 단계 확인 질문."""
+    signal_lines = "\n".join(
+        f"- **{lab}** — {exp}"
+        for lab, exp in zip(result["signals"], result["explains"])
+    ) or "- 여러 정황이 함께 확인됐어요."
 
-사용자는 의심스러운 링크를 클릭했거나 앱을 설치한 상태야. 지금은 기기와
-계정을 보호하는 게 핵심이야.
+    similar_block = ""
+    if similar_cases:
+        case_lines = "\n".join(
+            f"- {c.get('headline_ko') or c.get('title', '')}" for c in similar_cases[:2]
+        )
+        similar_block = data.SIMILAR_CASE_TEMPLATE.format(case_lines=case_lines)
 
-【 우선순위 원칙 】
-1. 설치된 의심 앱이 있다면 즉시 삭제 (삭제가 안 되면 기기를 비행기 모드로 전환)
-2. 해당 기기로 로그인했던 주요 계정(은행 앱, 이메일, SNS)의 비밀번호를
-   다른 안전한 기기에서 즉시 변경
-3. 백신 앱으로 악성코드 검사 실행
-{_GUIDE_JSON_FORMAT}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
+    body = data.SUSPICION_REPORT_TEMPLATE.format(
+        signal_lines=signal_lines,
+        similar_block=similar_block,
+        stage_question=data.STAGE_CONFIRM_QUESTIONS.get(stage, data.STAGE_CONFIRM_QUESTIONS["접촉초기"]),
+    )
 
-
-def guide_financial_loss(conversation_text: str) -> dict:
-    """플로우차트: 금융 피해 대응 가이드 (가장 심각한 단계)"""
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야. 판단하지 말고 차분하지만
-신속하게 안내해. 이 단계는 시간이 가장 중요해.
-
-사용자는 이미 돈을 송금한 상태야. 지금은 은행 지급정지가 무조건 최우선이야.
-
-【 우선순위 원칙 (이 순서를 절대 바꾸지 마) 】
-1. 지금 즉시 송금한 은행 고객센터 또는 112(경찰)에 전화해서 "지급정지"를
-   요청하는 것이 최우선 행동
-2. 지급정지 신청 후, 경찰서 방문 또는 사이버수사대 온라인 신고
-3. 피해 사실을 뒷받침할 증거(문자, 계좌이체 내역, 대화 캡처)를 미리 모아두기
-{_GUIDE_JSON_FORMAT}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
-
-
-# =============================================================================
-# 4) 대응 도구 3종
-# 플로우차트 노드 → "전화 대본 만들기" / "피해 상황 요약 리포트 만들기" /
-#                    "증거 보존 체크리스트 제공"
-# 이 세 개는 4가지 가이드 중 어느 것이 나왔든 공통으로 이어지는 다음 단계입니다.
-# =============================================================================
-
-def generate_report_script(conversation_text: str, stage: str) -> dict:
-    """
-    플로우차트: 금융기관/경찰 신고용 전화 대본 만들기
-
-    Args:
-        conversation_text: 지금까지의 대화 전체
-        stage: classify_stage()가 판단한 단계 ("접촉초기" 등) — 대본 내용에 반영
-    """
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야.
-사용자가 금융기관 또는 경찰(112)에 전화로 신고/상담할 때 그대로 읽을 수 있는
-전화 대본을 만들어줘. 사용자의 피해 단계는 "{stage}"야.
-
-【 대본 작성 원칙 】
-- 사용자가 당황한 상태에서도 그대로 읽으면 되도록, 실제 말하는 문장으로 작성
-- 상담원이 물어볼 만한 정보(발생 일시, 금액, 상대방 연락처/계좌 등)를
-  대화 내용에서 찾아 최대한 채워 넣고, 모르는 부분은 "확인 후 말씀드리겠습니다"로 처리
-- 너무 길지 않게, 핵심만
-
-【 응답 형식 - JSON만 】
-{{
-  "title": "전화 대본 제목 (예: 지급정지 신청 전화 대본)",
-  "script_lines": ["실제로 말할 문장 1", "문장 2", "..."]
-}}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
-
-
-def generate_damage_report(conversation_text: str, stage: str) -> dict:
-    """
-    플로우차트: 피해 상황 요약 리포트 만들기
-
-    사용자가 신고서 작성이나 상담 시 제출/참고할 수 있는 형태의
-    요약 리포트를 생성합니다.
-    """
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야.
-지금까지의 대화 내용을 바탕으로, 신고나 상담에 활용할 수 있는 피해 상황
-요약 리포트를 작성해줘. 사용자의 피해 단계는 "{stage}"야.
-
-【 작성 원칙 】
-- 객관적 사실 위주로 정리 (누가, 언제, 어떻게, 무엇을 요구받았는지)
-- 대화에서 확인되지 않은 정보는 추측해서 채우지 말고 "미확인"으로 표시
-- 신고 접수 담당자가 빠르게 상황을 파악할 수 있도록 간결하게
-
-【 응답 형식 - JSON만 】
-{{
-  "incident_summary": "사건 개요 한 문단",
-  "timeline": ["시간 순서대로 정리된 사실 1", "사실 2", "..."],
-  "requested_by_scammer": ["상대방이 요구했던 것들"],
-  "amount_lost": "피해 금액 (확인 안 되면 '미확인')"
-}}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
-
-
-def generate_evidence_checklist(conversation_text: str, stage: str) -> dict:
-    """
-    플로우차트: 증거 보존 체크리스트 제공
-
-    나중에 신고/수사에 필요한 증거를 놓치지 않도록 체크리스트를 만듭니다.
-    """
-    system_prompt = f"""
-너는 청년층 금융사기 대응을 돕는 AI 상담사 "든든이"야.
-사용자의 피해 단계는 "{stage}"야. 이 상황에서 나중에 신고나 수사에 필요할 수
-있는 증거를 놓치지 않도록, 지금 바로 확인/보존해야 할 체크리스트를 만들어줘.
-
-【 작성 원칙 】
-- 단계에 맞는 증거 위주로: 예) 금융피해 단계면 계좌이체 내역, 문자/카톡 캡처,
-  통화 녹음 여부 등
-- 사용자가 체크박스처럼 하나씩 확인할 수 있는 짧은 항목들로 구성
-- 이미 삭제됐을 수 있는 것(문자, 앱)은 "삭제했어도 통신사에 기록 요청 가능"처럼
-  포기하지 않아도 된다는 점을 언급
-
-【 응답 형식 - JSON만 】
-{{
-  "checklist": ["확인할 항목 1", "확인할 항목 2", "..."]
-}}
-"""
-    return _call_llm_json(system_prompt, conversation_text)
+    if refund_eligible(result.get("signal_ids", [])) is False:
+        body += "\n\n" + data.REFUND_NOT_ELIGIBLE_NOTE
+    return body
