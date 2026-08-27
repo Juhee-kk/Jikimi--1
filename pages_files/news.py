@@ -6,10 +6,24 @@ from pathlib import Path
 import streamlit as st
 
 import mock_data as data
+import scam_feed
 from components import fmt, queue_chat_prefill, render_quiz
 
-RECENT_REPORT_COUNTS = data.get_recent_report_counts(days=30)
-NEWLY_DETECTED_SCAMS = data.get_newly_detected_scams(days=30)
+# 해당 날짜(오늘) 기준 뒤로 30일 창으로 실데이터(data/structured_scam_articles.jsonl)를 집계한다.
+_NEWS_ARTICLES = scam_feed.load_news_articles()
+RECENT_REPORT_COUNTS = scam_feed.count_by_category(_NEWS_ARTICLES, days=30)
+
+# 신종 감지 카드: 세션당 한 번 무작위 4개를 뽑아 고정하고, '다른 수법 보기'로만 다시 뽑는다.
+_NOVEL_POOL_SIZE = len(scam_feed.novel_scam_pool(_NEWS_ARTICLES, days=30))
+
+
+def _roll_novel_scams() -> None:
+    st.session_state["novel_scams"] = scam_feed.sample_novel_scams(_NEWS_ARTICLES, limit=4, days=30)
+
+
+if "novel_scams" not in st.session_state:
+    _roll_novel_scams()
+NEWLY_DETECTED_SCAMS = st.session_state["novel_scams"]
 VOICE_PHISHING_CSV = Path(__file__).resolve().parents[1] / "data" / "경찰청_보이스피싱 현황_20251231.csv"
 
 st.markdown(
@@ -642,8 +656,16 @@ for i, method in enumerate(fixed_methods):
         render_method_card(method, "fixed_method", i)
 
 st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
-st.markdown('<div class="dj-headline" style="font-size:1.35rem;">2. 신종 감지된 수법</div>', unsafe_allow_html=True)
-st.caption("기존 분류에 딱 들어맞지 않는 새 패턴을 따로 모아볼 수 있어요.")
+novel_head_col, novel_roll_col = st.columns([3, 1])
+with novel_head_col:
+    st.markdown('<div class="dj-headline" style="font-size:1.35rem;">2. 신종 감지된 수법</div>', unsafe_allow_html=True)
+    st.caption("기존 분류에 딱 들어맞지 않는 새 패턴을 따로 모아볼 수 있어요.")
+with novel_roll_col:
+    if _NOVEL_POOL_SIZE > len(NEWLY_DETECTED_SCAMS) and st.button(
+        "다른 수법 보기 🔄", key="reroll_novel", use_container_width=True
+    ):
+        _roll_novel_scams()
+        st.rerun()
 
 if NEWLY_DETECTED_SCAMS:
     for i, method in enumerate(NEWLY_DETECTED_SCAMS):

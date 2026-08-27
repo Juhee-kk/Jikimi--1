@@ -1,14 +1,11 @@
 """텅장지키미 서비스 카피/목데이터 (docs/copy.md 기준).
 
-여기 있는 문자열은 docs/copy.md에 확정된 카피를 그대로 옮긴 것이며,
-요즘 수법 탭의 집계 데이터(SCAM_REPORTS 등)만 실제 크롤링/DB 연동 전까지 쓰는
-예시용 목데이터입니다.
+여기 있는 문자열은 docs/copy.md에 확정된 카피를 그대로 옮긴 것입니다.
+요즘 수법 탭의 집계·신종 감지 데이터는 scam_feed 모듈이 data/*.jsonl 실데이터에서
+직접 만듭니다(더는 이 파일에 목 집계 데이터를 두지 않습니다).
 """
 
 from __future__ import annotations
-
-from collections import defaultdict
-from datetime import date, datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # 0. 홈 — 히어로 / 공감 블록
@@ -429,95 +426,6 @@ NEWS_EMPTY_STATES = {
     "no_filter_match": "이 분류엔 최근 소식이 없어요. 다른 것도 볼래요?",
     "fetch_failed": "소식을 못 가져왔어요. 조금 뒤에 다시 열어주실래요?",
 }
-
-NEWS_WEEKLY_SUMMARY = {
-    "top_type": "투자 리딩방",
-    "phrase": "출금하려면 세금을 먼저 넣으셔야 합니다",
-}
-
-NEWS_MONTHLY_SUMMARY = {
-    "month_label": "2026년 8월",
-    "total_count_label": "9,353건",
-    "total_amount_label": "4,936억원",
-    "stats": [
-        {"value": "9,353건", "change": "전월 대비 -35.3%", "label": "이번 달 발생"},
-        {"value": "4,936억원", "change": None, "label": "이번 달 피해액"},
-        {"value": "52%", "change": None, "label": "기관사칭 피해자 중 20·30대"},
-        {"value": "7,438만원", "change": None, "label": "기관사칭 1건당 평균"},
-    ],
-}
-
-SCAM_REPORTS = [
-    {"date": "2026-08-18", "fraud_type_id": "voice_phishing", "count": 44},
-    {"date": "2026-08-12", "fraud_type_id": "voice_phishing", "count": 51},
-    {"date": "2026-07-25", "fraud_type_id": "voice_phishing", "count": 33},
-    {"date": "2026-08-17", "fraud_type_id": "loan_scam", "count": 28},
-    {"date": "2026-08-09", "fraud_type_id": "loan_scam", "count": 36},
-    {"date": "2026-07-27", "fraud_type_id": "loan_scam", "count": 30},
-    {"date": "2026-08-18", "fraud_type_id": "smishing", "count": 62},
-    {"date": "2026-08-11", "fraud_type_id": "smishing", "count": 71},
-    {"date": "2026-07-23", "fraud_type_id": "smishing", "count": 43},
-    {"date": "2026-08-15", "fraud_type_id": "messenger_impersonation", "count": 31},
-    {"date": "2026-08-04", "fraud_type_id": "messenger_impersonation", "count": 29},
-    {"date": "2026-07-29", "fraud_type_id": "messenger_impersonation", "count": 23},
-    {"date": "2026-08-14", "fraud_type_id": "romance_scam", "count": 21},
-    {"date": "2026-08-03", "fraud_type_id": "romance_scam", "count": 25},
-    {"date": "2026-07-26", "fraud_type_id": "romance_scam", "count": 15},
-    {"date": "2026-08-17", "fraud_type_id": "investment_scam", "count": 47},
-    {"date": "2026-08-07", "fraud_type_id": "investment_scam", "count": 58},
-    {"date": "2026-07-24", "fraud_type_id": "investment_scam", "count": 37},
-    {"date": "2026-08-16", "fraud_type_id": "secondhand_scam", "count": 43},
-    {"date": "2026-08-08", "fraud_type_id": "secondhand_scam", "count": 45},
-    {"date": "2026-07-28", "fraud_type_id": "secondhand_scam", "count": 31},
-    {"date": "2026-08-13", "fraud_type_id": "part_time_scam", "count": 24},
-    {"date": "2026-08-05", "fraud_type_id": "part_time_scam", "count": 27},
-    {"date": "2026-07-30", "fraud_type_id": "part_time_scam", "count": 21},
-    {"date": "2026-08-13", "fraud_type_id": "concert_ticket_takeover", "count": 10},
-    {"date": "2026-08-06", "fraud_type_id": "concert_ticket_takeover", "count": 8},
-    {"date": "2026-08-12", "fraud_type_id": "ai_voice_impersonation", "count": 6},
-    {"date": "2026-08-02", "fraud_type_id": "ai_voice_impersonation", "count": 5},
-]
-
-NEW_SCAM_PATTERNS = [
-    {
-    "id": "esim_investment_scam",
-    "tag": "신종 감지",
-    "title": "BTS 인기 앞세운 eSIM 투자 사기",
-    "summary": "이심(eSIM) 판매 사업에 투자하면 관광객 증가와 콘서트 특수로 원금 손실 없이 고수익이 난다며 투자자를 모집한 뒤, 신규 투자금으로 기존 투자자에게 수익금을 지급하는 폰지 사기 방식으로 운영된 사례예요.",
-    "red_flags": ["원금 손실이 절대 없다고 단정적으로 약속", "특정 이슈(콘서트, 관광 특수 등)를 앞세워 단기간 고수익을 강조"],
-    "how_to_avoid": "원금 보장과 고수익을 동시에 내세우는 투자 제안은 의심하고, 유사수신행위 여부를 금융감독원에서 먼저 확인하세요.",
-    "article_title": "BTS 인기 미끼로…eSIM 투자 사기 피해자 계속 늘어",
-    "article_url": "https://www.yonhapnewstv.co.kr/news/AKR20260817110111bv5",
-    "date": "2026.08.18",
-},
-]
-
-
-def _parse_scam_date(value: str) -> date:
-    return datetime.strptime(value, "%Y-%m-%d").date()
-
-
-def get_recent_report_counts(days: int = 30, today: date | None = None) -> dict[str, int]:
-    """최근 N일 동안 fraud_type_id별 보고 건수를 집계한다."""
-    today = today or date.today()
-    start_date = today - timedelta(days=days - 1)
-    counts: defaultdict[str, int] = defaultdict(int)
-
-    for report in SCAM_REPORTS:
-        reported_at = _parse_scam_date(report["date"])
-        if start_date <= reported_at <= today:
-            counts[report["fraud_type_id"]] += report["count"]
-
-    return dict(counts)
-
-
-def get_newly_detected_scams(days: int = 30, today: date | None = None) -> list[dict]:
-    """신종 감지 수법 목록에 최근 보고 건수를 붙여 반환한다."""
-    counts = get_recent_report_counts(days=days, today=today)
-    return [
-        {**pattern, "reports_30d": counts.get(pattern["id"], 0)}
-        for pattern in NEW_SCAM_PATTERNS
-    ]
 
 # ---------------------------------------------------------------------------
 # 6. 금융사기 상식 퀴즈
