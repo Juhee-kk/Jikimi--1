@@ -3,10 +3,13 @@
 Upstage Solar Pro(solar-pro4)를 OpenAI 호환 chat completions 형식으로 호출한다.
 
 흐름:
+  0) 사용자 상황을 한 줄로 구조화 (extract_user_modus_operandi, LLM)
+       → user_modus_operandi. DB의 modus_operandi_ko 필드와 같은 결의 요약문.
   1) 사기 의심 판정 = 유사도 DB 검색 (search_similar_cases, **미구현 스텁**)
+       - user_modus_operandi를 질의문으로 사용
        - 유사도 >= SIMILARITY_THRESHOLD → 바로 2)
        - 미만 → 가장 유사한 사례를 보여주고 사용자 확인(예/아니오)
-                예 → 2) / 아니오 → make_self_check() 안내로 종료
+                예 → 2) / 아니오 → make_self_check(user_modus_operandi) 안내로 종료
   2) 피해 단계 분류 (classify_damage_stage, LLM)
   3) 대응 가이드 (make_guide = LLM 공감 인트로 + guide_templates 고정 템플릿)
 """
@@ -82,9 +85,27 @@ def parse_json_safe(text: str, fallback: dict) -> dict:
 
 SIMILARITY_THRESHOLD = 0.75  # 이 값 이상이면 '사기 확실'
 
+EXTRACT_MODUS_OPERANDI_SYSTEM = """대화를 읽고, 사용자가 겪은 상황을 한 문장으로 요약하라.
+- 과거 사기 사례 DB의 'modus_operandi_ko' 필드와 같은 결: "누가/무엇을 사칭해 어떤 방식으로
+  접근했고, 무엇을 요구했는지"를 담은 한 문장.
+- 대화에 있는 사실만 담아라. 없는 내용은 지어내지 마라.
+- 사기라고 단정하는 표현은 쓰지 마라 (예: "~사기" 대신 "~을 요구받음" 식으로 서술).
+- 한 문장, 순수 텍스트만 출력. 다른 설명·따옴표 금지."""
 
-def search_similar_cases(chat_messages: list[dict]) -> dict:
-    """사용자 상황과 가장 비슷한 과거 사기 사례를 유사도로 찾는다. **[미구현]**
+
+def extract_user_modus_operandi(chat_messages: list[dict]) -> str:
+    """대화를 '사용자 상황 한 줄 요약'으로 구조화한다 (DB의 modus_operandi_ko와 같은 결).
+
+    이렇게 만든 user_modus_operandi는 두 군데서 쓰인다:
+      - search_similar_cases()의 검색 질의문
+      - make_self_check()가 확인 전화 대본을 만드는 근거
+    """
+    return call_llm(EXTRACT_MODUS_OPERANDI_SYSTEM, chat_messages, temperature=0.2).strip()
+
+
+def search_similar_cases(user_modus_operandi: str) -> dict:
+    """user_modus_operandi(사용자 상황 한 줄 요약)와 가장 비슷한 과거 사기 사례를
+    유사도로 찾는다. **[미구현]**
 
     실제 구현 시 data/structured_scam_articles.jsonl 등을 임베딩/유사도 검색해
     아래 형태를 채워 반환하면 된다. 지금은 로직 배선을 위한 더미값만 돌려준다.
@@ -164,12 +185,29 @@ def make_guide(stage: str, chat_messages: list[dict]) -> str:
     return intro.strip() + "\n\n" + guide_templates.resolve(stage)
 
 
-def make_self_check() -> str:
+SELF_CHECK_SCRIPT_SYSTEM = """사용자가 상대의 신원을 확인하려고 관련 기관·회사에 직접
+전화할 때 그대로 읽을 수 있는 확인 멘트를 써라. 아직 사기라고 단정된 상황이 아니라
+'사실 확인'을 위한 전화임을 잊지 말 것.
+
+형식(자연스러운 대화체 문단 2~4문장, 마크다운 불릿 금지):
+① 첫마디: 본인 소개 + 확인차 전화했다는 용건
+② 상황 설명: 아래 '사용자 상황' 요약을 그대로 반영 (없는 사실 추가·과장 금지)
+③ 확인 질문: "실제로 이런 연락을 보내셨거나 이런 절차가 있는 게 맞는지" 형태로 마무리"""
+
+
+def make_self_check(user_modus_operandi: str) -> str:
     """사기 의심이 '불확실'이고 사용자가 유사 사례와 다르다고 답했을 때 주는 안내.
 
-    사기 확정이 아니므로 LLM 공감 인트로 없이 고정 템플릿만 돌려준다.
+    사기 확정이 아니므로 공감 인트로는 없다. 대신 guide_templates.SELF_CHECK_GUIDE의
+    {generated_script} 자리에, user_modus_operandi(extract_user_modus_operandi로
+    구조화된 사용자 상황 한 줄 요약)를 근거로 LLM이 만든 확인 전화 대본을 채워 넣는다.
     """
-    return guide_templates.SELF_CHECK_GUIDE
+    script = call_llm(
+        SELF_CHECK_SCRIPT_SYSTEM,
+        [{"role": "user", "content": f"사용자 상황: {user_modus_operandi}"}],
+        temperature=0.4,
+    )
+    return guide_templates.SELF_CHECK_GUIDE.format(generated_script=script.strip())
 
 
 # ---------------------------------------------------------------------------

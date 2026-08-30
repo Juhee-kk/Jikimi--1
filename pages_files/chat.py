@@ -28,6 +28,7 @@ def _reset_state() -> None:
     st.session_state.ask_count = {"damage_stage": 0}
     st.session_state.damage_stage = None
     st.session_state.similar_case = None
+    st.session_state.user_modus_operandi = None
     st.session_state.tool_outputs = {}
 
 
@@ -115,8 +116,9 @@ def handle_user_message(text: str) -> None:
     phase = st.session_state.chat_phase
     try:
         if phase == "similarity":
-            # [미구현] 유사도 DB 검색으로 사기 의심 판정
-            result = services.search_similar_cases(_history())
+            # 사용자 상황을 한 줄로 구조화 → 유사도 DB 검색(질의문으로 사용) [검색은 미구현 스텁]
+            st.session_state.user_modus_operandi = services.extract_user_modus_operandi(_history())
+            result = services.search_similar_cases(st.session_state.user_modus_operandi)
             if services.is_fraud_certain(result["similarity"]):
                 advance_to_damage_stage()  # 사기 확실 → 피해 단계 진단
             else:
@@ -130,7 +132,7 @@ def handle_user_message(text: str) -> None:
                 advance_to_damage_stage()
             elif answer == "no":
                 st.session_state.chat_phase = "self_check"
-                reply(services.make_self_check())
+                reply(services.make_self_check(st.session_state.user_modus_operandi))
             else:
                 reply("**예** 또는 **아니오**로 답해 주시면 이어서 안내할게요.")
 
