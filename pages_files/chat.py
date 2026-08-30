@@ -16,12 +16,18 @@ MISSING_API_KEY_MESSAGE = "UPSTAGE_API 환경변수가 설정되어 있지 않�
 
 
 # --- 세션 초기화 ---
+# 대화 단계(chat_phase):
+#   similarity   → 첫 사용자 입력을 유사도 DB 검색에 넣는다 (services.search_similar_cases, 미구현)
+#   confirm      → 유사도가 낮아 '불확실'. 가장 유사한 사례를 보여주고 예/아니오를 기다린다
+#   damage_stage → 피해 단계 분류 (LLM)
+#   guided       → 대응 가이드 출력 완료. 대응 도구 3종 버튼 노출
+#   self_check   → '불확실'에서 사용자가 '아니오' → 스스로 재확인 안내로 종료
 def _reset_state() -> None:
-    st.session_state.chat_phase = "suspicion"
+    st.session_state.chat_phase = "similarity"
     st.session_state.chat_messages = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
-    st.session_state.ask_count = {"suspicion": 0, "damage_stage": 0}
+    st.session_state.ask_count = {"damage_stage": 0}
     st.session_state.damage_stage = None
-    st.session_state.signals = []
+    st.session_state.similar_case = None
     st.session_state.tool_outputs = {}
 
 
@@ -47,6 +53,55 @@ def finish_with_guide(stage: str) -> None:
     reply(services.make_guide(stage, _history()))
 
 
+def advance_to_damage_stage() -> None:
+    """피해 단계 분류를 돌리고, 결과에 따라 가이드로 넘기거나 한 번 더 되묻는다."""
+    st.session_state.chat_phase = "damage_stage"
+    s = services.classify_damage_stage(_history())
+    if s["stage"] == "근거부족" and st.session_state.ask_count["damage_stage"] < 2:
+        st.session_state.ask_count["damage_stage"] += 1
+        reply("정확한 대응을 안내해 드리려고 하나만 확인할게요.\n\n" + s["follow_up"])
+    else:
+        stage = s["stage"] if s["stage"] != "근거부족" else "접촉초기"
+        finish_with_guide(stage)
+
+
+_YES_EXACT = {"y", "yes", "예", "예.", "네", "넵", "응", "ㅇ", "ㅇㅇ", "맞아", "맞아요", "그래", "그래요", "비슷", "비슷해요"}
+_NO_EXACT = {"n", "no", "아니", "아니요", "아뇨", "아니야", "ㄴ", "ㄴㄴ", "달라요", "다릅니다", "아님", "아닌데요"}
+_NO_PHRASES = ("아니", "아뇨", "달라", "다릅니다", "비슷하지 않", "해당 안", "아닌 것 같", "관련 없")
+_YES_PHRASES = ("맞아", "맞습니다", "비슷", "그런 것 같", "네 ", "예 ")
+
+
+def _interpret_yesno(text: str) -> str | None:
+    """confirm 단계에서 사용자의 예/아니오 답을 해석. 애매하면 None(→ 다시 물어봄)."""
+    t = text.strip().lower().rstrip(".!?~ ")
+    if t in _YES_EXACT:
+        return "yes"
+    if t in _NO_EXACT:
+        return "no"
+    if any(k in t for k in _NO_PHRASES):   # 부정을 먼저 (예: "비슷하지 않아요")
+        return "no"
+    if any(k in t for k in _YES_PHRASES):
+        return "yes"
+    return None
+
+
+def _format_similar_case(case: dict | None) -> str:
+    if not case:
+        return (
+            "지금 상황과 비슷한 사례를 찾지는 못했어요. 그래도 확인이 필요해 보여요.\n\n"
+            "혹시 상대가 돈·개인정보·앱 설치를 요구했나요? **예 / 아니오**로 답해 주세요."
+        )
+    lines = ["찾아본 것 중 지금 상황과 가장 비슷한 사례예요.", "", f"**{case.get('headline_ko') or '유사 사례'}**"]
+    if case.get("summary_ko"):
+        lines.append(case["summary_ko"])
+    if case.get("modus_operandi_ko"):
+        lines.append(f"\n- 수법: {case['modus_operandi_ko']}")
+    if case.get("warning_signs"):
+        lines.append("- 이런 말 나오면 의심: " + ", ".join(case["warning_signs"]))
+    lines += ["", "지금 겪고 계신 상황이 이거랑 비슷한가요? **예 / 아니오**로 답해 주세요."]
+    return "\n".join(lines)
+
+
 def handle_user_message(text: str) -> None:
     text = text.strip()
     if not text:
@@ -59,39 +114,30 @@ def handle_user_message(text: str) -> None:
 
     phase = st.session_state.chat_phase
     try:
-        if phase == "suspicion":
-            r = services.classify_suspicion(_history())
-            if r["label"] == "근거부족" and st.session_state.ask_count["suspicion"] < 2:
-                st.session_state.ask_count["suspicion"] += 1
-                reply(r["follow_up"])
-            elif r["label"] == "낮음":
-                reply(
-                    "현재 내용만으로는 사기 가능성이 낮아 보여요. 다만 앞으로 "
-                    "개인정보·입금·링크 클릭을 요구받으면 꼭 다시 확인해 주세요!"
-                )
-            else:  # 의심 (근거부족 2회 초과 시에도 의심으로 진행: 안전 우선)
-                st.session_state.signals += r.get("signals", [])
-                st.session_state.chat_phase = "damage_stage"
-                s = services.classify_damage_stage(_history())
-                if s["stage"] == "근거부족":
-                    st.session_state.ask_count["damage_stage"] += 1
-                    reply(
-                        "몇 가지 위험 신호가 보여요. 정확한 대응을 안내해 드리기 위해 "
-                        "하나만 확인할게요.\n\n" + s["follow_up"]
-                    )
-                else:
-                    finish_with_guide(s["stage"])
+        if phase == "similarity":
+            # [미구현] 유사도 DB 검색으로 사기 의심 판정
+            result = services.search_similar_cases(_history())
+            if services.is_fraud_certain(result["similarity"]):
+                advance_to_damage_stage()  # 사기 확실 → 피해 단계 진단
+            else:
+                st.session_state.similar_case = result["case"]
+                st.session_state.chat_phase = "confirm"
+                reply(_format_similar_case(result["case"]))
+
+        elif phase == "confirm":
+            answer = _interpret_yesno(text)
+            if answer == "yes":
+                advance_to_damage_stage()
+            elif answer == "no":
+                st.session_state.chat_phase = "self_check"
+                reply(services.make_self_check())
+            else:
+                reply("**예** 또는 **아니오**로 답해 주시면 이어서 안내할게요.")
 
         elif phase == "damage_stage":
-            s = services.classify_damage_stage(_history())
-            if s["stage"] == "근거부족" and st.session_state.ask_count["damage_stage"] < 2:
-                st.session_state.ask_count["damage_stage"] += 1
-                reply(s["follow_up"])
-            else:
-                stage = s["stage"] if s["stage"] != "근거부족" else "접촉초기"
-                finish_with_guide(stage)
+            advance_to_damage_stage()
 
-        elif phase == "guided":
+        elif phase in ("guided", "self_check"):
             reply("추가로 궁금한 점이 있으면 편하게 말씀해 주세요. 새로운 상담은 위의 '새 상담' 버튼을 눌러주세요.")
     except services.MissingUpstageAPIError:
         reply(MISSING_API_KEY_MESSAGE)

@@ -1,7 +1,14 @@
 """LLM 호출 / 진단 로직 / 대응 가이드·도구 생성.
 
 Upstage Solar Pro(solar-pro4)를 OpenAI 호환 chat completions 형식으로 호출한다.
-전체 흐름은 docs/PIPELINE (1).md 명세를 따른다: suspicion → damage_stage → guided.
+
+흐름:
+  1) 사기 의심 판정 = 유사도 DB 검색 (search_similar_cases, **미구현 스텁**)
+       - 유사도 >= SIMILARITY_THRESHOLD → 바로 2)
+       - 미만 → 가장 유사한 사례를 보여주고 사용자 확인(예/아니오)
+                예 → 2) / 아니오 → make_self_check() 안내로 종료
+  2) 피해 단계 분류 (classify_damage_stage, LLM)
+  3) 대응 가이드 (make_guide = LLM 공감 인트로 + guide_templates 고정 템플릿)
 """
 
 from __future__ import annotations
@@ -12,7 +19,7 @@ import re
 
 import requests
 
-import mock_data as data
+import guide_templates
 
 UPSTAGE_URL = "https://api.upstage.ai/v1/chat/completions"
 MODEL = "solar-pro4"
@@ -62,40 +69,51 @@ def parse_json_safe(text: str, fallback: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 분류 함수 ① — 사기 의심 여부
+# 사기 의심 판정 ① — [미구현] 유사도 기반 DB 검색으로 대체 예정
 # ---------------------------------------------------------------------------
+#
+# 예전엔 LLM이 "의심/낮음/근거부족"을 판정했다(classify_suspicion). 이제는
+# 사용자 상황을 과거 사기 사례 DB와 유사도로 비교해서:
+#   - 유사도 >= SIMILARITY_THRESHOLD  → '사기 확실' → 바로 피해단계 진단으로
+#   - 유사도 <  SIMILARITY_THRESHOLD  → '불확실'   → 가장 유사한 사례를 사용자에게
+#                                       보여주고 스스로 판단(예/아니오)하게 한다
+#
+# 아래 search_similar_cases() 는 아직 껍데기다. 유사도 검색을 실제로 붙일 자리.
 
-SUSPICION_SYSTEM = """당신은 금융사기 위험 신호를 분석하는 보조 도구다.
-사용자가 겪고 있는 상황 설명을 읽고 아래 JSON만 출력하라. 다른 텍스트 금지.
-
-{"label": "의심" | "낮음" | "근거부족",
- "confidence": 0~100 정수,
- "signals": ["감지된 위험 신호를 짧은 한국어 구로"],
- "follow_up": "근거부족일 때 사용자에게 물어볼 질문 1개 (다른 label이면 빈 문자열)"}
-
-판정 기준:
-- "의심": 다음 신호가 하나라도 명확하면. 선입금·보증금 요구 / 개인정보·신분증·계좌 요구 /
-  수사기관·금융기관 사칭 정황 / 비밀 유지 강요 / 외부 메신저(텔레그램 등) 이동 유도 /
-  출금 거부·추가 입금 요구 / 검증 불가한 고수익 약속 / 앱 설치 유도
-- "낮음": 상황이 충분히 설명됐고 위 신호가 없으면
-- "근거부족": 정보가 부족해 판단할 수 없으면. follow_up에는 판단에 가장 결정적인
-  것 하나만 질문 (예: "혹시 상대방이 돈이나 개인정보를 요구한 적 있나요?")
-
-절대 규칙: "사기가 확실하다"는 단정 금지. signals는 관찰된 사실만 기술."""
+SIMILARITY_THRESHOLD = 0.75  # 이 값 이상이면 '사기 확실'
 
 
-def classify_suspicion(chat_messages: list[dict]) -> dict:
-    fallback = {
-        "label": "근거부족",
-        "confidence": 0,
-        "signals": [],
-        "follow_up": "상황을 조금 더 자세히 알려주실 수 있나요? 상대방이 뭐라고 했는지, 어떤 요구를 받았는지 궁금해요.",
+def search_similar_cases(chat_messages: list[dict]) -> dict:
+    """사용자 상황과 가장 비슷한 과거 사기 사례를 유사도로 찾는다. **[미구현]**
+
+    실제 구현 시 data/structured_scam_articles.jsonl 등을 임베딩/유사도 검색해
+    아래 형태를 채워 반환하면 된다. 지금은 로직 배선을 위한 더미값만 돌려준다.
+
+    반환:
+      {
+        "similarity": float,            # 0.0~1.0, 가장 유사한 사례와의 점수
+        "case": {                       # 사용자에게 보여줄 가장 유사한 사례 (없으면 None)
+            "headline_ko": str,
+            "summary_ko": str,
+            "modus_operandi_ko": str,
+            "warning_signs": list[str],
+        } | None,
+      }
+    """
+    # TODO: 유사도 검색 구현. 아래는 임시 더미 — 항상 '불확실' 경로로 빠진다.
+    similarity = 0.0
+    case = {
+        "headline_ko": "(유사 사례 검색 미구현)",
+        "summary_ko": "여기에 유사도로 찾은 가장 비슷한 사기 사례 요약이 들어갑니다.",
+        "modus_operandi_ko": "",
+        "warning_signs": [],
     }
-    raw = call_llm(SUSPICION_SYSTEM, chat_messages)
-    result = parse_json_safe(raw, fallback)
-    if result.get("label") not in ("의심", "낮음", "근거부족"):
-        return fallback
-    return result
+    return {"similarity": similarity, "case": case}
+
+
+def is_fraud_certain(similarity: float) -> bool:
+    """유사도가 임계값 이상이면 '사기 확실'."""
+    return similarity >= SIMILARITY_THRESHOLD
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +149,7 @@ def classify_damage_stage(chat_messages: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 대응 가이드 — 고정 템플릿(mock_data.GUIDE_TEMPLATES) + LLM 공감 인트로
+# 대응 가이드 — 고정 템플릿(guide_templates.GUIDE_TEMPLATES) + LLM 공감 인트로
 # ---------------------------------------------------------------------------
 
 GUIDE_INTRO_SYSTEM = """사용자의 상황에 공감하는 문장 1~2개를 한국어로 써라.
@@ -143,7 +161,15 @@ GUIDE_INTRO_SYSTEM = """사용자의 상황에 공감하는 문장 1~2개를 한
 
 def make_guide(stage: str, chat_messages: list[dict]) -> str:
     intro = call_llm(GUIDE_INTRO_SYSTEM, chat_messages, temperature=0.7)
-    return intro.strip() + "\n\n" + data.GUIDE_TEMPLATES[stage]
+    return intro.strip() + "\n\n" + guide_templates.resolve(stage)
+
+
+def make_self_check() -> str:
+    """사기 의심이 '불확실'이고 사용자가 유사 사례와 다르다고 답했을 때 주는 안내.
+
+    사기 확정이 아니므로 LLM 공감 인트로 없이 고정 템플릿만 돌려준다.
+    """
+    return guide_templates.SELF_CHECK_GUIDE
 
 
 # ---------------------------------------------------------------------------
