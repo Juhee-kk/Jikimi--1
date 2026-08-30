@@ -4,7 +4,7 @@ data/structured_scam_articles.jsonl(뉴스 구조화 자료)를 scam_data_pipeli
 통과시켜, 뉴스 페이지(pages_files/news.py)가 쓰는 두 가지를 만든다.
 
 - count_by_category(): 최근 N일 카테고리별 뉴스 기사 수 (섹션 1 배지)
-- recent_novel_scams(): is_novel 기사 중 품질 필터 통과분 최신순 상위 N개 (섹션 2 카드)
+- recent_novel_scams(): is_youth_targeted=true AND is_novel=true 기사 중 품질 필터 통과분 최신순 상위 N개 (섹션 2 카드)
 
 카테고리 ID는 data/taxonomy/scam_taxonomy.json 기준이고, mock_data.FRAUD_TYPES의 id와
 1:1로 일치한다(voice_phishing, loan_scam, smishing, messenger_impersonation,
@@ -127,14 +127,15 @@ def novel_scam_pool(
 ) -> list[dict]:
     """품질 필터 + 헤드라인 근사중복 제거를 거친 신종 수법 카드 전체 목록(감지일 최신순).
 
-    필터: is_novel=true / category != irrelevant / article_type in {사례, 신종경보}
-          / category_confidence >= 0.7 / 최근 days일.
+    필터: is_youth_targeted=true AND is_novel=true / category != irrelevant
+          / article_type in {사례, 신종경보} / category_confidence >= 0.7 / 최근 days일.
     같은 사건을 다룬 여러 매체 기사는 가장 최신 1건만 남긴다.
     """
     candidates = [
         row
         for row in rows
-        if row.get("is_novel")
+        if row.get("is_youth_targeted")
+        and row.get("is_novel")
         and row.get("category") != "irrelevant"
         and row.get("article_type") in NOVEL_ARTICLE_TYPES
         and float(row.get("category_confidence") or 0) >= NOVEL_MIN_CONFIDENCE
