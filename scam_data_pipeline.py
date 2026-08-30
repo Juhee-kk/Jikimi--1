@@ -12,6 +12,10 @@
     python scam_data_pipeline.py structure
     python scam_data_pipeline.py embed
     python scam_data_pipeline.py run --verbose
+
+일회성 보정:
+    python scam_data_pipeline.py repair-headlines --dry-run   # 확인만
+    python scam_data_pipeline.py repair-headlines             # headline_ko를 원문 제목으로 복구
 """
 
 from __future__ import annotations
@@ -128,8 +132,10 @@ OFFICIAL_DEFAULTS = {
     "novelty_evidence": "공식 기준 사례로 정리된 기존 사기 시나리오",
 }
 
+# headline_ko는 일부러 빠져 있다. LLM에게 제목을 다시 쓰게 하면 원문이 멀쩡한데도
+# 한국어가 깨지는 사례가 나왔다(392건 중 25건). 제목은 생성 대상이 아니라 원문
+# raw_articles.jsonl의 title을 그대로 복사한다 — structure_article() 참고.
 NEWS_LLM_FIELDS = [
-    "headline_ko",
     "summary_ko",
     "article_type",
     "category",
@@ -509,6 +515,16 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             row = strip_surrogate_chars(row)
             file.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    """jsonl 전체를 덮어쓴다. 쓰다가 죽어도 원본이 남도록 임시파일에 쓴 뒤 교체한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as file:
+        for row in rows:
+            file.write(json.dumps(strip_surrogate_chars(row), ensure_ascii=False) + "\n")
+    tmp_path.replace(path)
 
 
 def http_json(url: str, body: dict[str, Any], api_key: str, timeout: int) -> dict[str, Any]:
@@ -895,6 +911,9 @@ def structure_article(article: dict[str, Any]) -> dict[str, Any]:
     structured = normalize_structured(extract_json_object(payload["choices"][0]["message"]["content"]))
     structured.update(
         {
+            # headline_ko는 LLM 출력이 아니라 원문 제목을 그대로 쓴다. 모델이 값을
+            # 흘려보내더라도 여기서 덮어써 원문을 권위 있는 소스로 유지한다.
+            "headline_ko": clean_text(article.get("title")),
             "raw_article_id": article["id"],
             "article_published_at": article.get("published_at"),
             "article_url": article["link"],
@@ -941,6 +960,78 @@ def structure(limit: int | None = None, verbose: bool = False) -> dict[str, Any]
         "structured": structured_count,
         "stored_irrelevant": irrelevant_count,
         "failed": failed,
+        "path": str(STRUCTURED_JSONL),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 2-1. 구조화 자료 보정 (일회성 backfill)
+# ---------------------------------------------------------------------------
+
+
+def looks_garbled(text: str | None) -> bool:
+    """한국어 문장이 깨졌는지 대략 판정한다.
+
+    깨진 출력에서 실제로 관찰된 두 가지 신호를 본다.
+      - 고립 자모: "서이ㄎ워ㄎ워ㄎ 3류들"
+      - 한중일 한자·가나 혼입 3자 이상: "全豪明望特画球格会乶える"
+    그 외에는 글자(숫자·구두점 제외) 중 한글 비율이 절반에 못 미치면 깨진 것으로 본다.
+    숫자와 도메인 꼬리표를 분모에서 빼야 "…190억원 피해…스캠 사이트 179개 차단 -
+    koreancenter.or.kr" 같은 정상 제목이 오탐으로 걸리지 않는다.
+    영문 비중이 큰 제목은 여전히 걸릴 수 있으므로 자동 삭제 기준이 아니라
+    리포트·점검 용도로만 쓴다.
+    """
+    text = text or ""
+    if re.search(r"[ㄱ-ㆎ]", text):
+        return True
+    letters = [char for char in text if char.isalpha()]
+    if not letters:
+        return False
+    cjk = sum(1 for char in letters if "一" <= char <= "鿿" or "぀" <= char <= "ヿ")
+    hangul = sum(1 for char in letters if "가" <= char <= "힣")
+    return cjk >= 3 or hangul / len(letters) < 0.5
+
+
+def repair_headlines(dry_run: bool = False, verbose: bool = False) -> dict[str, Any]:
+    """structured_scam_articles.jsonl의 headline_ko를 원문 제목으로 다시 맞춘다.
+
+    예전 파이프라인은 headline_ko를 LLM에게 생성시켰고, 그 과정에서 원문이 멀쩡한데도
+    제목이 깨진 행이 남았다. 지금은 structure_article()이 원문 title을 그대로 복사하므로,
+    이 명령은 같은 규칙을 과거 데이터에 소급 적용하는 backfill이다. 몇 번 돌려도 결과는 같다.
+
+    headline_ko가 바뀌면 build_embedding_text()의 입력도 바뀌므로,
+    복구 후에는 `embed --force`로 재임베딩해야 Qdrant가 최신 상태가 된다.
+    """
+    titles = {
+        row["id"]: clean_text(row.get("title"))
+        for row in read_jsonl(RAW_JSONL)
+        if row.get("id")
+    }
+    rows = read_jsonl(STRUCTURED_JSONL)
+
+    repaired = 0
+    unmatched = 0
+    for row in rows:
+        title = titles.get(row.get("raw_article_id"))
+        if not title:
+            unmatched += 1
+            continue
+        if row.get("headline_ko") != title:
+            if verbose:
+                print(f"[repair] {row.get('headline_ko')!r}\n     ->  {title!r}", flush=True)
+            row["headline_ko"] = title
+            repaired += 1
+
+    if repaired and not dry_run:
+        write_jsonl(STRUCTURED_JSONL, rows)
+
+    return {
+        "rows": len(rows),
+        "repaired": repaired,
+        "unmatched_raw_article_id": unmatched,
+        "garbled_headline_after": sum(1 for row in rows if looks_garbled(row.get("headline_ko"))),
+        "garbled_summary_ko": sum(1 for row in rows if looks_garbled(row.get("summary_ko"))),
+        "dry_run": dry_run,
         "path": str(STRUCTURED_JSONL),
     }
 
@@ -1129,9 +1220,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="사기 사례 RAG 데이터 파이프라인")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("collect", "structure", "embed", "run"):
+    for name in ("collect", "structure", "embed", "run", "repair-headlines"):
         sub = subparsers.add_parser(name)
         sub.add_argument("--verbose", action="store_true")
+        if name == "repair-headlines":
+            sub.add_argument("--dry-run", action="store_true", help="파일을 고치지 않고 결과만 확인")
         if name in ("collect", "run"):
             sub.add_argument("--limit", type=int, default=20, help="피드당 신규 수집 상한")
             sub.add_argument("--timeout", type=int, default=8)
@@ -1156,6 +1249,8 @@ def main() -> int:
 
 def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     result: dict[str, Any] = {}
+    if args.command == "repair-headlines":
+        return {"repair_headlines": repair_headlines(dry_run=args.dry_run, verbose=args.verbose)}
     if args.command in ("collect", "run"):
         result["collect"] = collect(
             limit=args.limit,
