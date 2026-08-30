@@ -102,8 +102,8 @@ def _fmt_detected_date(row: dict) -> str:
 def _to_new_scam_card(row: dict) -> dict:
     """구조화 행 → render_new_scam_card가 먹는 카드 dict.
 
-    필드 소스: 기사제목=headline_ko / 요약=summary_ko / 감지일=article_published_at /
-    url=article_url / "이 말 나오면 의심하세요"=warning_signs /
+    필드 소스: 제목=modus_operandi_ko(비면 headline_ko) / 요약=summary_ko(비면 headline_ko) /
+    감지일=article_published_at / url=article_url / "이 말 나오면 의심하세요"=warning_signs /
     "이렇게 피해요"=response_guide_ko (비면 _AVOID_GUIDE).
     as_text로 "없음"·"[]" 같은 빈값 표기를 걸러낸다.
     """
@@ -112,8 +112,8 @@ def _to_new_scam_card(row: dict) -> dict:
         red_flags = [as_text(row.get("lure_hook")) or "출처가 불분명한 접근"]
     return {
         "tag": "신종 감지",
-        "title": _clean_headline(row.get("headline_ko")) or "신종 수법",
-        "summary": as_text(row.get("summary_ko")) or as_text(row.get("modus_operandi_ko")),
+        "title": as_text(row.get("modus_operandi_ko")) or _clean_headline(row.get("headline_ko")) or "신종 수법",
+        "summary": as_text(row.get("summary_ko")) or _clean_headline(row.get("headline_ko")),
         "red_flags": red_flags,
         "how_to_avoid": as_text(row.get("response_guide_ko")) or _AVOID_GUIDE,
         "article_title": as_text(row.get("publisher")) or "관련 기사",
