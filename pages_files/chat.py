@@ -1,3 +1,40 @@
+"""상황 진단 챗봇 화면.
+
+여기서는 화면 그리기와 단계 전환만 다룬다. 판단 로직은 전부 services.py에 있다.
+
+대화 단계(st.session_state.chat_phase):
+
+  collecting    시작 단계. 사용자 발화를 구조화하고 필수 필드가 비면 되묻는다.
+                필드가 차거나 되묻기 상한에 걸리면 사례 검색을 돌리고,
+                그 결과에 따라 아래 셋 중 하나로 넘어간다.
+                                                    → collect_and_advance()
+
+  confirming    Coverage 0.6~0.8. 확정하기엔 모자라 사용자에게 되묻는 단계다.
+                후보 사례를 헤드라인·일치 축·공식 링크와 함께 보여주고
+                "이거랑 비슷한가요"를 묻는다.
+                예 → guided / 아니오 → insufficient
+
+  guided        사례가 확인된 종착점. 피해 단계별 가이드를 이미 냈고,
+                화면 아래에 대응 도구 3종 버튼이 뜬다.
+                리포트를 만들면 .md 다운로드 버튼이 추가된다.
+
+  insufficient  사기로 단정하기 어려운 종착점. 기관에 직접 전화해 확인할
+                대본을 냈다. 정상적인 절차를 밟은 사용자가 여기로 온다.
+
+단계 전환 함수
+  collect_and_advance()   ② 구조화 → 되묻기 또는 ③으로
+  run_search()            ③ 검색 → Coverage 세 갈래
+  go_to_guide()           ④ 피해 단계 진단 → ⑤ 가이드, phase=guided
+  go_to_agency_inquiry()  4-B 기관 문의 대본, phase=insufficient
+
+화면에서 신경 쓴 것
+  - 검색과 판정에 임베딩 1회 + LLM 1회가 들어가 한 턴이 5~10초 걸린다.
+    단계별 문구를 넣은 스피너로 무엇을 하는 중인지 알린다.
+  - 주민번호·인증번호가 섞인 입력은 구조화 전에 걸러 경고만 보낸다.
+  - 첨부한 캡처·녹음은 파일명만 대화에 남긴다. 아직 내용을 읽지는 않는다.
+  - API 키 누락과 통신 오류는 대화 흐름을 깨지 않고 안내 메시지로 대신한다.
+"""
+
 import requests
 import streamlit as st
 
@@ -13,22 +50,16 @@ TOOL_BUTTONS = [
 
 CONNECTION_ERROR_MESSAGE = "지금 분석 서버 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요."
 MISSING_API_KEY_MESSAGE = "UPSTAGE_API 환경변수가 설정되어 있지 않아요. 실행 터미널에서 키를 설정한 뒤 앱을 다시 시작해 주세요."
+CLOSING_MESSAGE = "추가로 궁금한 점이 있으면 편하게 말씀해 주세요. 새로운 상담은 위의 '새 상담' 버튼을 눌러주세요."
 
 
-# --- 세션 초기화 ---
-# 대화 단계(chat_phase):
-#   similarity   → 첫 사용자 입력을 유사도 DB 검색에 넣는다 (services.search_similar_cases, 미구현)
-#   confirm      → 유사도가 낮아 '불확실'. 가장 유사한 사례를 보여주고 예/아니오를 기다린다
-#   damage_stage → 피해 단계 분류 (LLM)
-#   guided       → 대응 가이드 출력 완료. 대응 도구 3종 버튼 노출
-#   self_check   → '불확실'에서 사용자가 '아니오' → 스스로 재확인 안내로 종료
 def _reset_state() -> None:
-    st.session_state.chat_phase = "similarity"
+    st.session_state.chat_phase = "collecting"
     st.session_state.chat_messages = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
-    st.session_state.ask_count = {"damage_stage": 0}
+    st.session_state.structured = {}
+    st.session_state.follow_up_rounds = 0
     st.session_state.damage_stage = None
-    st.session_state.similar_case = None
-    st.session_state.user_modus_operandi = None
+    st.session_state.candidate = None
     st.session_state.tool_outputs = {}
 
 
@@ -48,23 +79,55 @@ def reply(content: str) -> None:
     append("assistant", content)
 
 
-def finish_with_guide(stage: str) -> None:
+# --- 단계 전환 --------------------------------------------------------------
+
+
+def go_to_guide() -> None:
+    """④-A 피해 단계를 진단하고 그 단계의 가이드를 낸다."""
+    stage = services.classify_damage_stage(st.session_state.structured, _history())
     st.session_state.damage_stage = stage
     st.session_state.chat_phase = "guided"
     reply(services.make_guide(stage, _history()))
 
 
-def advance_to_damage_stage() -> None:
-    """피해 단계 분류를 돌리고, 결과에 따라 가이드로 넘기거나 한 번 더 되묻는다."""
-    st.session_state.chat_phase = "damage_stage"
-    s = services.classify_damage_stage(_history())
-    if s["stage"] == "근거부족" and st.session_state.ask_count["damage_stage"] < 2:
-        st.session_state.ask_count["damage_stage"] += 1
-        reply("정확한 대응을 안내해 드리려고 하나만 확인할게요.\n\n" + s["follow_up"])
-    else:
-        stage = s["stage"] if s["stage"] != "근거부족" else "접촉초기"
-        finish_with_guide(stage)
+def go_to_agency_inquiry() -> None:
+    """④-B 사기로 단정할 수 없을 때. 기관에 직접 확인할 대본을 낸다."""
+    st.session_state.chat_phase = "insufficient"
+    reply(services.make_agency_inquiry_script(st.session_state.structured))
 
+
+def run_search() -> None:
+    """② 사례를 검색하고 Coverage로 세 갈래를 탄다."""
+    result = services.search_similar_cases(st.session_state.structured)
+    decision = result["decision"]
+
+    if decision == "confirmed":
+        go_to_guide()
+    elif decision == "needs_confirm":
+        st.session_state.candidate = result["results"][0]
+        st.session_state.chat_phase = "confirming"
+        reply(services.format_case_for_user(result["results"][0]))
+    else:
+        go_to_agency_inquiry()
+
+
+def collect_and_advance() -> None:
+    """① 대화를 구조화하고, 필수 필드가 차면 검색으로 넘어간다.
+
+    되묻기는 MAX_FOLLOW_UP_ROUNDS번까지만 한다. 그 이상은 사용자를 지치게 하고,
+    모자란 정보로도 검색은 돌아간다(대신 Coverage가 낮게 나와 ④-B로 빠진다).
+    """
+    st.session_state.structured = services.structure_situation(_history())
+    missing = services.missing_required_fields(st.session_state.structured)
+
+    if missing and st.session_state.follow_up_rounds < services.MAX_FOLLOW_UP_ROUNDS:
+        st.session_state.follow_up_rounds += 1
+        reply(services.ask_for(missing))
+        return
+    run_search()
+
+
+# --- 예/아니오 해석 ---------------------------------------------------------
 
 _YES_EXACT = {"y", "yes", "예", "예.", "네", "넵", "응", "ㅇ", "ㅇㅇ", "맞아", "맞아요", "그래", "그래요", "비슷", "비슷해요"}
 _NO_EXACT = {"n", "no", "아니", "아니요", "아뇨", "아니야", "ㄴ", "ㄴㄴ", "달라요", "다릅니다", "아님", "아닌데요"}
@@ -73,7 +136,7 @@ _YES_PHRASES = ("맞아", "맞습니다", "비슷", "그런 것 같", "네 ", "�
 
 
 def _interpret_yesno(text: str) -> str | None:
-    """confirm 단계에서 사용자의 예/아니오 답을 해석. 애매하면 None(→ 다시 물어봄)."""
+    """애매하면 None을 돌려 다시 묻게 한다."""
     t = text.strip().lower().rstrip(".!?~ ")
     if t in _YES_EXACT:
         return "yes"
@@ -86,21 +149,12 @@ def _interpret_yesno(text: str) -> str | None:
     return None
 
 
-def _format_similar_case(case: dict | None) -> str:
-    if not case:
-        return (
-            "지금 상황과 비슷한 사례를 찾지는 못했어요. 그래도 확인이 필요해 보여요.\n\n"
-            "혹시 상대가 돈·개인정보·앱 설치를 요구했나요? **예 / 아니오**로 답해 주세요."
-        )
-    lines = ["찾아본 것 중 지금 상황과 가장 비슷한 사례예요.", "", f"**{case.get('headline_ko') or '유사 사례'}**"]
-    if case.get("summary_ko"):
-        lines.append(case["summary_ko"])
-    if case.get("modus_operandi_ko"):
-        lines.append(f"\n- 수법: {case['modus_operandi_ko']}")
-    if case.get("warning_signs"):
-        lines.append("- 이런 말 나오면 의심: " + ", ".join(case["warning_signs"]))
-    lines += ["", "지금 겪고 계신 상황이 이거랑 비슷한가요? **예 / 아니오**로 답해 주세요."]
-    return "\n".join(lines)
+# --- 입력 처리 --------------------------------------------------------------
+
+_SPINNER = {
+    "collecting": "비슷한 사례를 찾아보고 있어요…",
+    "confirming": "대응 방법을 정리하고 있어요…",
+}
 
 
 def handle_user_message(text: str) -> None:
@@ -115,32 +169,21 @@ def handle_user_message(text: str) -> None:
 
     phase = st.session_state.chat_phase
     try:
-        if phase == "similarity":
-            # 사용자 상황을 한 줄로 구조화 → 유사도 DB 검색(질의문으로 사용) [검색은 미구현 스텁]
-            st.session_state.user_modus_operandi = services.extract_user_modus_operandi(_history())
-            result = services.search_similar_cases(st.session_state.user_modus_operandi)
-            if services.is_fraud_certain(result["similarity"]):
-                advance_to_damage_stage()  # 사기 확실 → 피해 단계 진단
-            else:
-                st.session_state.similar_case = result["case"]
-                st.session_state.chat_phase = "confirm"
-                reply(_format_similar_case(result["case"]))
+        with st.spinner(_SPINNER.get(phase, "확인하고 있어요…")):
+            if phase == "collecting":
+                collect_and_advance()
 
-        elif phase == "confirm":
-            answer = _interpret_yesno(text)
-            if answer == "yes":
-                advance_to_damage_stage()
-            elif answer == "no":
-                st.session_state.chat_phase = "self_check"
-                reply(services.make_self_check(st.session_state.user_modus_operandi))
-            else:
-                reply("**예** 또는 **아니오**로 답해 주시면 이어서 안내할게요.")
+            elif phase == "confirming":
+                answer = _interpret_yesno(text)
+                if answer == "yes":
+                    go_to_guide()
+                elif answer == "no":
+                    go_to_agency_inquiry()
+                else:
+                    reply("**예** 또는 **아니오**로 답해 주시면 이어서 안내할게요.")
 
-        elif phase == "damage_stage":
-            advance_to_damage_stage()
-
-        elif phase in ("guided", "self_check"):
-            reply("추가로 궁금한 점이 있으면 편하게 말씀해 주세요. 새로운 상담은 위의 '새 상담' 버튼을 눌러주세요.")
+            else:  # guided, insufficient
+                reply(CLOSING_MESSAGE)
     except services.MissingUpstageAPIError:
         reply(MISSING_API_KEY_MESSAGE)
     except requests.exceptions.RequestException:
@@ -152,7 +195,7 @@ AUDIO_EXT = ("mp3", "m4a", "wav")
 
 
 def handle_uploaded_files(files) -> None:
-    """채팅바에서 첨부한 캡처·녹음 처리."""
+    """채팅바에서 첨부한 캡처·녹음 처리. 파일 내용은 아직 읽지 않는다."""
     for f in files:
         ext = f.name.rsplit(".", 1)[-1].lower()
         if ext in IMAGE_EXT:
@@ -169,7 +212,8 @@ def handle_uploaded_files(files) -> None:
         reply(reply_text)
 
 
-# --- 헤더 ---
+# --- 화면 ------------------------------------------------------------------
+
 header_col, reset_col = st.columns([5, 1])
 with header_col:
     st.markdown('<div class="dj-headline" style="font-size:1.8rem;">💬 상황 진단</div>', unsafe_allow_html=True)
@@ -178,16 +222,14 @@ with reset_col:
         _reset_state()
         st.rerun()
 
-# --- 홈/뉴스에서 넘어온 프리필 처리 ---
+# 홈/뉴스 카드에서 넘어온 프리필
 if st.session_state.get("prefill_chip"):
-    prefill = st.session_state.pop("prefill_chip")
-    handle_user_message(prefill)
+    handle_user_message(st.session_state.pop("prefill_chip"))
 
-# --- 대화 내역 렌더 ---
 for entry in st.session_state.chat_messages:
     render_chat_message(entry["role"], entry["content"])
 
-# --- guided phase: 대응 도구 버튼 3개 ---
+# guided 단계에서만 대응 도구 3종을 노출한다
 if st.session_state.chat_phase == "guided":
     tool_cols = st.columns(3)
     for col, (tool_key, label) in zip(tool_cols, TOOL_BUTTONS):
@@ -214,7 +256,6 @@ if st.session_state.chat_phase == "guided":
 
 st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-# --- 입력창 (캡처/녹음 첨부는 입력창의 파일 아이콘으로) ---
 submission = st.chat_input(
     data.CHAT_INPUT_PLACEHOLDER,
     accept_file="multiple",

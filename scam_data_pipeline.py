@@ -88,17 +88,54 @@ def load_dotenv(path: Path | None = None) -> None:
 load_dotenv()
 
 
+# Streamlit Cloud 는 .env 를 못 본다(gitignore 대상이라 배포본에 아예 없다). 대신
+# 대시보드 Settings → Secrets 에 넣은 값을 st.secrets 로만 내준다. 반대로 CI 와
+# 로컬 CLI 에는 streamlit 실행 맥락이 없다. 세 환경을 한 함수로 흡수한다.
+_secrets_unavailable = False
+
+
+def get_secret(name: str, default: str | None = None) -> str | None:
+    """설정값을 Streamlit secrets → 환경변수(.env 포함) 순으로 찾는다.
+
+    환경마다 키를 주는 방법이 다르다.
+      Streamlit Cloud : 대시보드 Settings → Secrets   (st.secrets 로만 읽힌다)
+      로컬            : 셸 export 또는 .env
+      GitHub Actions  : workflow 의 env:
+
+    st.secrets 는 secrets.toml 이 없으면 조회 자체가 StreamlitSecretNotFoundError 를
+    던진다. .get() 도 `in` 도 마찬가지라 예외로 감싸는 것 말고는 확인할 방법이 없다.
+    로컬과 CI 에는 그 파일이 없으므로 이 처리가 빠지면 두 환경이 바로 깨진다.
+    streamlit 이 설치되지 않은 환경도 있을 수 있어 import 까지 함께 보호한다.
+    """
+    global _secrets_unavailable
+    if not _secrets_unavailable:
+        try:
+            import streamlit as st
+
+            value = st.secrets[name]
+        except KeyError:
+            pass  # secrets 는 있는데 이 키만 없다. 환경변수로 넘어간다.
+        except Exception:
+            # secrets.toml 이 없거나 streamlit 이 없다. 이 프로세스에서는 다시 묻지 않는다.
+            _secrets_unavailable = True
+        else:
+            text = str(value).strip()
+            if text:
+                return text
+    return os.environ.get(name) or default
+
+
 UPSTAGE_CHAT_URL = "https://api.upstage.ai/v1/chat/completions"
 UPSTAGE_EMBEDDING_URL = "https://api.upstage.ai/v1/embeddings"
-UPSTAGE_STRUCTURING_MODEL = os.getenv("UPSTAGE_STRUCTURING_MODEL", "solar-mini")
-UPSTAGE_EMBEDDING_MODEL = os.getenv("UPSTAGE_EMBEDDING_MODEL", "embedding-passage")
+UPSTAGE_STRUCTURING_MODEL = get_secret("UPSTAGE_STRUCTURING_MODEL", "solar-mini")
+UPSTAGE_EMBEDDING_MODEL = get_secret("UPSTAGE_EMBEDDING_MODEL", "embedding-passage")
 
-QDRANT_URL = os.getenv(
+QDRANT_URL = get_secret(
     "QDRANT_URL",
     "https://32cd9c82-9cec-491c-acc9-fbd57c385e1b.sa-east-1-0.aws.cloud.qdrant.io",
 )
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "0818")
-QDRANT_VECTOR_SIZE = int(os.getenv("QDRANT_VECTOR_SIZE", "4096"))
+QDRANT_COLLECTION = get_secret("QDRANT_COLLECTION", "0818")
+QDRANT_VECTOR_SIZE = int(get_secret("QDRANT_VECTOR_SIZE", "4096"))
 
 
 # ---------------------------------------------------------------------------
@@ -468,9 +505,9 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 # 재시도할 상태 코드. 429(호출 한도)는 잠시 뒤 다시 걸면 대개 통과한다.
 RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
-MAX_HTTP_RETRIES = int(os.getenv("UPSTAGE_MAX_RETRIES", "5"))
+MAX_HTTP_RETRIES = int(get_secret("UPSTAGE_MAX_RETRIES", "5"))
 # 연속 호출 간 최소 간격(초). 한도에 처음부터 안 걸리게 속도를 낮춘다.
-MIN_CALL_INTERVAL = float(os.getenv("UPSTAGE_MIN_INTERVAL", "0.4"))
+MIN_CALL_INTERVAL = float(get_secret("UPSTAGE_MIN_INTERVAL", "0.4"))
 
 _last_call_at = 0.0
 
@@ -532,7 +569,7 @@ def http_json(
 
 
 def upstage_key() -> str:
-    api_key = os.getenv("UPSTAGE_API") or os.getenv("UPSTAGE_API_KEY")
+    api_key = get_secret("UPSTAGE_API") or get_secret("UPSTAGE_API_KEY")
     if not api_key:
         raise RuntimeError("UPSTAGE_API 또는 UPSTAGE_API_KEY가 필요합니다.")
     return api_key
@@ -1263,9 +1300,9 @@ def embed_and_store(
     except ImportError as exc:
         raise RuntimeError("qdrant-client가 필요합니다. pip install -r requirements.txt") from exc
 
-    api_key = os.getenv("QDRANT_API_KEY")
+    api_key = get_secret("QDRANT_API_KEY")
     if not api_key:
-        raise RuntimeError("QDRANT_API_KEY 환경변수가 필요합니다.")
+        raise RuntimeError("QDRANT_API_KEY 가 필요합니다. (Streamlit Secrets 또는 환경변수)")
 
     rows = load_index_rows(min_confidence, skip_official=skip_official)
     targets = [(point_id(row), row) for row in rows]
