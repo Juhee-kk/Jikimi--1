@@ -50,7 +50,10 @@ TOOL_BUTTONS = [
 
 CONNECTION_ERROR_MESSAGE = "지금 분석 서버 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요."
 MISSING_API_KEY_MESSAGE = "UPSTAGE_API 환경변수가 설정되어 있지 않아요. 실행 터미널에서 키를 설정한 뒤 앱을 다시 시작해 주세요."
-CLOSING_MESSAGE = "추가로 궁금한 점이 있으면 편하게 말씀해 주세요. 새로운 상담은 위의 '새 상담' 버튼을 눌러주세요."
+# 종착점(guided / insufficient)에서 더 들어온 발화에 대한 응답. 자유 질문에 답할
+# 수단이 없으므로 질문을 유도하지 않는다. 이 서비스가 할 일은 기관으로 넘겨주는
+# 데까지이고, 그 뒤는 기관이 맡는다.
+CLOSING_MESSAGE = "이 상담은 여기까지예요. 새 상담은 위의 '새 상담' 버튼을 눌러 다시 시작할 수 있어요."
 
 
 def _reset_state() -> None:
