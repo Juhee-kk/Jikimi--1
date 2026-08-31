@@ -186,6 +186,17 @@ def inject_custom_css() -> None:
         .dj-card-yellow { background: var(--dj-card-yellow); }
         .dj-card-coral { background: var(--dj-card-coral); color: var(--dj-white); }
 
+        /* 동일 높이 3열 그리드 (위젯 없는 순수 카드용) */
+        .dj-grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            align-items: stretch;
+        }
+        @media (max-width: 900px) {
+            .dj-grid-3 { grid-template-columns: 1fr; }
+        }
+
         /* --- 위험도 배지 --- */
         .dj-badge {
             display: inline-block;

@@ -1,7 +1,7 @@
 import streamlit as st
 
 import mock_data as data
-from components import fmt, render_dark_band, render_footer_band, render_mascot
+from components import fmt, render_footer_band, render_mascot
 
 EMPATHY_BLOCK = {
     "quote": '"이 정도로 신고해도 되나?" 싶어서 그냥 넘긴 적 있죠.',
@@ -9,58 +9,56 @@ EMPATHY_BLOCK = {
 }
 
 ENTRY_CARDS = [
-    {
-        "icon": "💸",
-        "title": "입금 직전인데 찜찜해요",
-        "desc": "보내기 전에 확인해요",
-        "color": "blue",
-    },
-    {
-        "icon": "📱",
-        "title": "이상한 문자를 받았어요",
-        "desc": "눌렀는지에 따라 할 일이 달라요",
-        "color": "green",
-    },
-    {
-        "icon": "💬",
-        "title": "대화 중 돈 얘기가 나왔어요",
-        "desc": "한 마디로는 판단이 안 될 때",
-        "color": "yellow",
-    },
-    {
-        "icon": "🚨",
-        "title": "이미 보냈어요",
-        "desc": "지금이 제일 중요해요",
-        "color": "coral",
-    },
+     {
+            "icon": "💸",
+            "title": "입금 직전인데 찜찜해요",
+            "desc": "보내기 전에 확인해요",
+            "chip": "💸 입금하기 직전이에요",
+            "color": "blue",
+        },
+        {
+            "icon": "📱",
+            "title": "이상한 문자를 받았어요",
+            "desc": "첨부된 링크가 있었는지, 눌렀는지에 따라 할 일이 달라요",
+            "chip": "📩 이상한 문자를 받았어요",
+            "color": "green",
+        },
+        {
+            "icon": "💬",
+            "title": "대화 중 돈 얘기가 나왔어요",
+            "desc": "한두 마디로는 판단이 안 될 때, 상황 맥락 전체를 확인해요",
+            "chip": "💬 온라인에서 만난 사람이 돈을 요구해요",
+            "color": "yellow",
+        },
+        {
+            "icon": "🚨",
+            "title": "이미 보냈어요",
+            "desc": "지금이 제일 중요해요. 지금부터 할 일을 순서대로 확인해요",
+            "chip": "🚨 이미 돈을 보냈어요",
+            "color": "coral",
+        },
 ]
 
 DIFFERENTIATORS = [
     {
-        "num": "01",
-        "title": "계좌 조회,\n그 이상을 봅니다",
-        "body": "신고 이력이 없다고 안전한 게 아니에요. 대화 맥락 전체를 봐요.",
-    },
-    {
-        "num": "02",
-        "title": '"사기예요"를 넘어\n"어떻게 대응할지" 알려줘요',
-        "body": "판정만 하고 끝내지 않아요. 지금 순서대로 할 일을 알려드려요.",
-    },
-    {
-        "num": "03",
-        "title": "매일 업데이트되는\n따끈한 사기 수법",
-        "body": "매일 뉴스와 기관 발표를 업데이트해, 최신 수법을 놓치지 않아요.",
-    },
-]
-
-HOW_IT_WORKS_STEPS = [
-    {"num": 1, "title": "상황 공유하기", "desc": "받은 문자나 캡처본을 올려주세요"},
-    {"num": 2, "title": "실시간 분석", "desc": "패턴을 같이 살펴봐요"},
-    {"num": 3, "title": "안전한 선택", "desc": "위험도를 확인하고 진행하세요"},
+            "num": "01",
+            "title": "계좌 조회,그 이상을 봅니다",
+            "body": "신고 이력이 없다고 안전한 게 아니에요.\n비슷한 사례가 있는지 확인이 필요해요.\n ",
+        },
+        {
+            "num": "02",
+            "title": '확인에서 끝나지 않고 대응 방법까지 알려드려요',
+            "body": "갑작스러운 상황에서는 뭘 먼저 해야 할지 모를 수 있어요.\n지금 상황에 맞춰 필요한 확인과 대응을 순서대로 안내해드릴게요.\n ",
+        },
+        {
+            "num": "03",
+            "title": "매일 업데이트되는 따끈한 사기 수법",
+            "body": "뉴스와 공식 기관에서 공개한 사기 사례를 매일 모아 정리해요.\n‘요즘 수법’ 탭에서 최근 사례와 주요 수법을 확인할 수 있고,\n‘상담할 때도 최신 수법을 기준으로 확인해요.",
+        },
 ]
 
 TRUST_BADGES = [
-    {"icon": "🔒", "label": "개인정보 보호", "desc": "주민번호·비밀번호는 절대 안 물어요"},
+    {"icon": "📰", "label": "요즘 수법 한눈에", "desc": "매일 업데이트되는 수법을 확인해요"},
     {"icon": "🤝", "label": "판단 대신 안내", "desc": "지키미와 함께 해결해가요"},
     {"icon": "🛟", "label": "끝까지 함께", "desc": "대응 가이드까지 같이 봐요"},
 ]
@@ -118,23 +116,17 @@ for i, (col, card) in enumerate(zip(card_cols, ENTRY_CARDS)):
 
 st.markdown("<div style='height:2.2rem'></div>", unsafe_allow_html=True)
 
-# --- 차별성 3블록 (화이트 카드) ---
-diff_cols = st.columns(3)
-for col, d in zip(diff_cols, DIFFERENTIATORS):
-    with col:
-        st.markdown(
-            f'''
-            <div class="dj-card dj-card-coral-tint">
-                <div style="font-size:1.5rem; opacity:0.45; font-weight:700; color: var(--dj-primary);">{d["num"]}</div>
-                <div class="dj-headline" style="font-size:1.1rem; margin-top:0.3rem;">{fmt(d["title"])}</div>
-                <div style="margin-top:0.5rem; font-size:0.85rem; opacity:0.85;">{fmt(d["body"])}</div>
-            </div>
-            ''',
-            unsafe_allow_html=True,
-        )
-
-# --- 사용 흐름 3스텝 (풀블리드 딥그린) ---
-render_dark_band("지킴이와 함께하는 3단계", HOW_IT_WORKS_STEPS)
+# --- 차별성 3블록 (화이트 카드) --- 그리드로 묶어 카드 높이를 서로 맞춤
+# 주의: 마크다운이 4칸 들여쓰기를 코드블록으로 읽으므로 HTML은 한 줄로 붙여서 넘긴다.
+diff_cards = "".join(
+    f'<div class="dj-card dj-card-coral-tint">'
+    f'<div style="font-size:1.5rem; opacity:0.45; font-weight:700; color: var(--dj-primary);">{d["num"]}</div>'
+    f'<div class="dj-headline" style="font-size:1.1rem; margin-top:0.3rem;">{fmt(d["title"])}</div>'
+    f'<div style="margin-top:0.5rem; font-size:0.85rem; opacity:0.85;">{fmt(d["body"])}</div>'
+    f'</div>'
+    for d in DIFFERENTIATORS
+)
+st.markdown(f'<div class="dj-grid-3">{diff_cards}</div>', unsafe_allow_html=True)
 
 # --- 신뢰 배지 + 워드마크 (풀블리드 코랄 푸터 밴드) ---
 render_footer_band("텅장지키미", "대한민국 청년의 텅장을 지키는 그날까지!", TRUST_BADGES)

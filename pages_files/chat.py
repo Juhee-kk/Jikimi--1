@@ -14,17 +14,32 @@
                 "이거랑 비슷한가요"를 묻는다.
                 예 → guided / 아니오 → insufficient
 
+  detail_check  사기로 판단된 뒤, 피해 단계 진단에 필요한 정보를 채우는 단계.
+                검색에는 필요 없어 판정 전에 묻지 않은 것들(이미 한 행동, 송금 방식)을
+                여기서 묻는다. 4-B 로 빠질 사용자에게는 묻지 않는다.
+                MAX_DETAIL_ROUNDS번까지 묻고 stage_check 로 넘어간다.
+
+  stage_check   가이드를 내기 직전, 위험 신호와 판정된 피해 단계를 보여주고
+                "이게 맞나요"를 묻는 단계. 가이드 내용이 피해 단계에 따라 통째로
+                갈리므로 확정 전에 사용자와 맞춰 본다.
+                맞다 → guided / 다르다(보충 설명) → 재구조화·재진단 후 다시 물음
+                MAX_STAGE_CHECK_ROUNDS번을 넘기면 더 묻지 않고 사용자가 마지막에
+                설명한 내용으로 진단해 guided 로 넘어간다.
+
   guided        사례가 확인된 종착점. 피해 단계별 가이드를 이미 냈고,
                 화면 아래에 대응 도구 3종 버튼이 뜬다.
                 리포트를 만들면 .md 다운로드 버튼이 추가된다.
 
-  insufficient  사기로 단정하기 어려운 종착점. 기관에 직접 전화해 확인할
-                대본을 냈다. 정상적인 절차를 밟은 사용자가 여기로 온다.
+  insufficient  사기로 단정하기 어려운 종착점. 어디에 확인하면 되는지를 냈고,
+                화면 아래 '신고 전화 대본' 버튼으로 대본을 볼 수 있다.
+                정상적인 절차를 밟은 사용자가 여기로 온다.
 
 단계 전환 함수
   collect_and_advance()   ② 구조화 → 되묻기 또는 ③으로
   run_search()            ③ 검색 → Coverage 세 갈래
-  go_to_guide()           ④ 피해 단계 진단 → ⑤ 가이드, phase=guided
+  go_to_detail_check()    ④ 진단용 정보 되묻기, phase=detail_check
+  go_to_stage_check()     ④ 피해 단계 진단 → 사용자 확인 요청, phase=stage_check
+  go_to_guide()           ⑤ 확정된 단계의 가이드, phase=guided
   go_to_agency_inquiry()  4-B 기관 문의 대본, phase=insufficient
 
 화면에서 신경 쓴 것
@@ -42,8 +57,10 @@ import mock_data as data
 import services
 from components import render_chat_message
 
+CALL_SCRIPT_LABEL = "📞 신고 전화 대본"
+
 TOOL_BUTTONS = [
-    ("call_script", "📞 신고 전화 대본"),
+    ("call_script", CALL_SCRIPT_LABEL),
     ("report", "📋 피해 상황 요약 리포트"),
     ("checklist", "🗂 증거 보존 체크리스트"),
 ]
@@ -53,17 +70,24 @@ MISSING_API_KEY_MESSAGE = "UPSTAGE_API 환경변수가 설정되어 있지 않�
 # 종착점(guided / insufficient)에서 더 들어온 발화에 대한 응답. 자유 질문에 답할
 # 수단이 없으므로 질문을 유도하지 않는다. 이 서비스가 할 일은 기관으로 넘겨주는
 # 데까지이고, 그 뒤는 기관이 맡는다.
-CLOSING_MESSAGE = "이 상담은 여기까지예요. 새 상담은 위의 '새 상담' 버튼을 눌러 다시 시작할 수 있어요."
+CLOSING_MESSAGE = "이 상담은 여기까지예요. 새 상담 버튼을 눌러 다시 시작할 수 있어요."
 
 
 def _reset_state() -> None:
     st.session_state.chat_phase = "collecting"
-    st.session_state.chat_messages = [{"role": "assistant", "content": data.CHAT_OPENING_MESSAGE}]
+    st.session_state.chat_messages = [
+        {"role": "assistant", "content": data.CHAT_OPENING_MESSAGE, "kind": "ask"}
+    ]
     st.session_state.structured = {}
     st.session_state.follow_up_rounds = 0
     st.session_state.damage_stage = None
+    st.session_state.detail_rounds = 0
+    st.session_state.asked_detail_fields = set()
+    st.session_state.stage_check_rounds = 0
     st.session_state.candidate = None
+    st.session_state.search_results = []
     st.session_state.tool_outputs = {}
+    st.session_state.inquiry_script = None
 
 
 if "chat_phase" not in st.session_state:
@@ -71,32 +95,108 @@ if "chat_phase" not in st.session_state:
 
 
 def _history() -> list[dict]:
+    """대화 전체. 가이드·도구·단계 분류가 맥락으로 쓴다."""
     return [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_messages]
 
 
-def append(role: str, content: str) -> None:
-    st.session_state.chat_messages.append({"role": role, "content": content})
+def _structuring_history() -> list[dict]:
+    """구조화에 넘길 대화. 어시스턴트 쪽은 짧은 질문만 남긴다.
+
+    인사말과 되묻기 질문은 추출을 돕는다 — 빼면 결과가 얇아져 검색 질의문이 약해진다
+    (골든셋 #17에서 key_context가 통째로 비면서 recall이 실패했다). 반대로 위험 신호
+    목록이나 가이드처럼 긴 생성물이 끼면 모델이 추출을 그만두고 빈 객체를 돌려준다.
+    그래서 메시지를 쌓을 때 종류를 붙여 두고 여기서 가른다.
+    """
+    return [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.chat_messages
+        if m["role"] == "user" or m.get("kind") == "ask"
+    ]
 
 
-def reply(content: str) -> None:
-    append("assistant", content)
+def append(role: str, content: str, kind: str = "out") -> None:
+    """kind="ask" 는 구조화에 함께 넘길 짧은 질문. 생성물은 "out" 으로 둔다."""
+    st.session_state.chat_messages.append({"role": role, "content": content, "kind": kind})
+
+
+def reply(content: str, kind: str = "out") -> None:
+    append("assistant", content, kind)
 
 
 # --- 단계 전환 --------------------------------------------------------------
 
 
-def go_to_guide() -> None:
-    """④-A 피해 단계를 진단하고 그 단계의 가이드를 낸다."""
-    stage = services.classify_damage_stage(st.session_state.structured, _history())
+def collect_details() -> None:
+    """진단에 필요한 정보를 채운다. 다 찼거나 상한에 걸리면 단계 확인으로 넘어간다.
+
+    검색용 정보만으로는 '무엇을 이미 했는지'를 알 수 없다. 그 값이 피해 단계를 가르고
+    단계가 가이드 전체를 가른다.
+
+    한 번 물은 필드는 asked_detail_fields 에 남겨 다시 묻지 않는다. 이 단계는 빈칸이면
+    묻기 때문에, "그런 건 없었어요"라는 답으로도 필드는 계속 비어 있다. 기억해 두지
+    않으면 같은 질문이 라운드마다 되돌아온다.
+    """
+    st.session_state.structured = services.structure_situation(_structuring_history())
+    asked = st.session_state.asked_detail_fields
+    missing = services.missing_diagnosis_fields(st.session_state.structured, asked)
+
+    if missing and st.session_state.detail_rounds < services.MAX_DETAIL_ROUNDS:
+        st.session_state.detail_rounds += 1
+        picked = missing[: services.MAX_FIELDS_PER_QUESTION]
+        asked.update(picked)
+        reply(services.ask_for(picked, services.ASK_HEAD_DETAIL), kind="ask")
+        return
+    go_to_stage_check()
+
+
+def go_to_detail_check() -> None:
+    """④ 사기로 판단된 직후. 진단용 정보를 먼저 채운다."""
+    st.session_state.chat_phase = "detail_check"
+    collect_details()
+
+
+def go_to_stage_check() -> None:
+    """④-A 피해 단계를 진단하고, 가이드를 내기 전에 사용자에게 맞는지 묻는다.
+
+    구조화는 collect_details() 가 방금 끝냈으므로 다시 하지 않는다.
+    """
+    structured = st.session_state.structured
+    stage = services.classify_damage_stage(structured)
     st.session_state.damage_stage = stage
+    st.session_state.chat_phase = "stage_check"
+    reply(services.make_stage_check(structured, st.session_state.search_results, stage))
+
+
+def go_to_guide() -> None:
+    """⑤ 확정된 피해 단계의 가이드를 낸다."""
     st.session_state.chat_phase = "guided"
-    reply(services.make_guide(stage, _history()))
+    reply(services.make_guide(st.session_state.damage_stage, _history()))
+
+
+def revise_stage_check() -> None:
+    """사용자가 단계를 정정했을 때. 다시 진단해 되묻되, 상한을 넘기면 그대로 확정한다."""
+    st.session_state.structured = services.structure_situation(_structuring_history())
+    st.session_state.stage_check_rounds += 1
+    if st.session_state.stage_check_rounds >= services.MAX_STAGE_CHECK_ROUNDS:
+        # 더 묻지 않는다. 사용자가 마지막에 설명한 내용을 그대로 쓴다.
+        st.session_state.damage_stage = (
+            services.classify_damage_stage(st.session_state.structured) or "접촉초기"
+        )
+        go_to_guide()
+        return
+    go_to_stage_check()
 
 
 def go_to_agency_inquiry() -> None:
-    """④-B 사기로 단정할 수 없을 때. 기관에 직접 확인할 대본을 낸다."""
+    """④-B 사기로 단정할 수 없을 때. 어디에 확인하면 되는지를 낸다.
+
+    전화 대본은 여기서 함께 받아 두기만 하고, 버튼을 눌렀을 때 내보낸다.
+    LLM 호출은 이 한 번뿐이라 버튼을 눌러도 기다릴 일이 없다.
+    """
     st.session_state.chat_phase = "insufficient"
-    reply(services.make_agency_inquiry_script(st.session_state.structured))
+    guide, script = services.make_agency_inquiry_script(st.session_state.structured)
+    st.session_state.inquiry_script = script
+    reply(guide)
 
 
 def run_search() -> None:
@@ -104,8 +204,10 @@ def run_search() -> None:
     result = services.search_similar_cases(st.session_state.structured)
     decision = result["decision"]
 
+    st.session_state.search_results = result["results"]
+
     if decision == "confirmed":
-        go_to_guide()
+        go_to_detail_check()
     elif decision == "needs_confirm":
         st.session_state.candidate = result["results"][0]
         st.session_state.chat_phase = "confirming"
@@ -120,12 +222,12 @@ def collect_and_advance() -> None:
     되묻기는 MAX_FOLLOW_UP_ROUNDS번까지만 한다. 그 이상은 사용자를 지치게 하고,
     모자란 정보로도 검색은 돌아간다(대신 Coverage가 낮게 나와 ④-B로 빠진다).
     """
-    st.session_state.structured = services.structure_situation(_history())
+    st.session_state.structured = services.structure_situation(_structuring_history())
     missing = services.missing_required_fields(st.session_state.structured)
 
     if missing and st.session_state.follow_up_rounds < services.MAX_FOLLOW_UP_ROUNDS:
         st.session_state.follow_up_rounds += 1
-        reply(services.ask_for(missing))
+        reply(services.ask_for(missing), kind="ask")
         return
     run_search()
 
@@ -156,7 +258,9 @@ def _interpret_yesno(text: str) -> str | None:
 
 _SPINNER = {
     "collecting": "비슷한 사례를 찾아보고 있어요…",
-    "confirming": "대응 방법을 정리하고 있어요…",
+    "confirming": "상황을 정리하고 있어요…",
+    "detail_check": "확인하고 있어요…",
+    "stage_check": "대응 방법을 정리하고 있어요…",
 }
 
 
@@ -179,11 +283,22 @@ def handle_user_message(text: str) -> None:
             elif phase == "confirming":
                 answer = _interpret_yesno(text)
                 if answer == "yes":
-                    go_to_guide()
+                    go_to_detail_check()
                 elif answer == "no":
                     go_to_agency_inquiry()
                 else:
-                    reply("**예** 또는 **아니오**로 답해 주시면 이어서 안내할게요.")
+                    reply("**예** 또는 **아니오**로 답해 주시면 이어서 안내할게요.", kind="ask")
+
+            elif phase == "detail_check":
+                collect_details()
+
+            elif phase == "stage_check":
+                # "맞아요"가 아니면 전부 정정으로 본다. 사용자가 덧붙인 설명이
+                # 재진단의 근거가 되므로, 애매한 답도 되묻지 않고 그대로 넘긴다.
+                if _interpret_yesno(text) == "yes":
+                    go_to_guide()
+                else:
+                    revise_stage_check()
 
             else:  # guided, insufficient
                 reply(CLOSING_MESSAGE)
@@ -212,7 +327,7 @@ def handle_uploaded_files(files) -> None:
         else:
             icon, kind, reply_text = "📄", "파일", "파일 확인했어요."
         append("user", f"{icon} {kind} 첨부: {f.name}")
-        reply(reply_text)
+        reply(reply_text, kind="ask")
 
 
 # --- 화면 ------------------------------------------------------------------
@@ -256,6 +371,14 @@ if st.session_state.chat_phase == "guided":
             file_name="텅장지키미_상담요약.md",
             mime="text/markdown",
         )
+
+# insufficient 단계에서는 기관 문의 대본 하나만 노출한다. 이미 만들어 둔 문자열이라
+# 눌러도 새로 부르지 않는다. 한 번 내보내면 대화에 남으므로 버튼은 감춘다.
+if st.session_state.chat_phase == "insufficient" and st.session_state.get("inquiry_script"):
+    if st.button(CALL_SCRIPT_LABEL, key="tool_inquiry_script", use_container_width=True):
+        reply(f"**{CALL_SCRIPT_LABEL}**\n\n{st.session_state.inquiry_script}")
+        st.session_state.inquiry_script = None
+        st.rerun()
 
 st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 

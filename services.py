@@ -21,7 +21,7 @@
        신고 전화 대본 · 피해 요약 리포트 · 증거 보존 체크리스트
 
   4-B 사기라 단정할 수 없을 때             make_agency_inquiry_script()
-       기관에 직접 전화해 확인할 대본을 준다.
+       어디에 확인할지 안내하고, 전화 대본은 버튼을 눌렀을 때 따로 낸다.
        못 찾은 것을 사기로 몰지 않고, 사용자가 스스로 확인하게 하는 출구다.
 
 --- 설계에서 판단이 갈렸던 지점들 ---
@@ -178,19 +178,53 @@ AXES = [
 AXIS_IDS = [db for db, _, _ in AXES]
 
 # 이게 없으면 검색이 성립하지 않는 필드. 비면 되묻는다.
-REQUIRED_FIELDS = ["contact_channel", "stated_identity", "requested_action"]
+#
+# 기준은 하나다 — query_text() 가 실제로 쓰는 값인가. 검색 질의문은
+# user_modus_operandi(+situation_summary) · key_context · requested_action 으로 만든다.
+# 앞의 하나는 LLM 이 발화에서 늘 만들어 내므로, 되물어서 얻어야 하는 건 이 둘뿐이다.
+#
+# 접근경로(contact_channel)와 사칭대상(stated_identity)은 여기 없다. AXES 의 축이긴
+# 하지만 query_text 에도 사례 쪽 RETRIEVAL_FIELDS 에도 들어가지 않아 1단계 recall 에
+# 쓰이지 않고, coverage_score 의 분모는 '사용자가 실제로 말한 축'이라 비어 있어도
+# 감점이 없다. 검색을 막지 않는 값 때문에 사기 판정을 한 턴 늦출 이유가 없다.
+#
+# 사칭대상은 특히 '없는 게 정상'인 수법이 있어서 필수로 두면 안 된다. 착오송금 후
+# 재송금 요구, 개인 판매자 사칭처럼 상대가 아무 신분도 대지 않는 유형에서는 물어봐야
+# 돌아올 답이 "모르는 사람"뿐이다. 검색을 한 턴 늦추고 사용자에게는 방금 한 말을
+# 못 알아들은 것처럼 보인다. 이런 값은 사기로 판정된 뒤 DIAGNOSIS_FIELDS 에서 챙긴다.
+REQUIRED_FIELDS = ["key_context", "requested_action"]
 
 # 필드별 되묻기 문구. LLM으로 생성하면 톤이 흔들려서 고정 문구를 쓴다.
 FIELD_QUESTIONS = {
     "contact_channel": "그 연락은 어떤 경로로 왔나요? (전화, 문자, 카카오톡, SNS, 이메일 등)",
-    "stated_identity": "상대가 자기를 누구라고 하던가요? (기관·회사 이름이나 직책)",
+    "stated_identity": "상대가 자기를 누구라고 하던가요? (기관·회사 이름이나 직책. 안 밝혔으면 그렇게 알려주세요)",
     "key_context": "무슨 이유로 연락이 왔다고 하던가요?",
     "requested_action": "상대가 뭘 하라고 하던가요? (링크 클릭, 앱 설치, 송금, 개인정보 입력 등)",
     "taken_action": "그중에 이미 하신 게 있나요? 아직 아무것도 안 하셨다면 그렇게 말씀해 주세요.",
     "money_method": "돈을 요구했다면 어떤 방식으로 보내라고 하던가요?",
 }
 
+# 사기로 판정된 뒤 빈칸을 훑는 단계. 검색 관문을 두 개로 좁힌 만큼, 여기서는 남은
+# 필드 전부를 대상으로 본다. 피해 단계 진단과 산출물(신고 대본·리포트)이 쓰는 값이
+# 여기서 채워진다. 4-B 로 빠질 사용자에게는 이 단계 자체가 없다 — 쓸 데가 없는
+# 질문이 되기 때문이다.
+#
+# 순서가 곧 질문 순서다(MAX_FIELDS_PER_QUESTION 만큼 앞에서 자른다). 피해 단계를
+# 가르는 taken_action 이 맨 앞이고, 검색 관문을 이미 통과한 key_context·requested_action
+# 은 사실상 차 있어 맨 뒤에 둔다.
+DIAGNOSIS_FIELDS = [
+    "taken_action", "contact_channel", "stated_identity", "money_method",
+    "key_context", "requested_action",
+]
+
+# 이 단계에서는 unknown_fields 게이트를 쓰지 않는다. 여섯 필드 모두 대응 안내의
+# 정확도를 실제로 좌우하는 값이라, 비어 있으면 한 번은 물어볼 값어치가 있다.
+# 대신 같은 필드를 두 번 묻지 않는다 — 그 역할은 호출부가 넘기는 asked 가 한다.
+# 게이트를 그대로 뒀다면 "돈 요구는 없었어요"라고 답한 사용자에게 money_method 를
+# 다시 묻게 되는데, 그 반복을 막는 건 게이트가 아니라 '이미 물어봤다'는 기억이다.
+
 MAX_FOLLOW_UP_ROUNDS = 2      # 이 이상 되묻지 않는다. 사용자를 지치게 하면 안 된다.
+MAX_DETAIL_ROUNDS = 2         # 판정 뒤 추가 질문도 같은 이유로 상한을 둔다.
 MAX_FIELDS_PER_QUESTION = 2   # 한 번에 두 개까지만 묻는다.
 
 STRUCTURING_SYSTEM = """당신은 사용자가 설명한 상황을 요약하기 위한 정보 추출기입니다.
@@ -212,8 +246,17 @@ STRUCTURING_SYSTEM = """당신은 사용자가 설명한 상황을 요약하기 
 - user_modus_operandi: "누가/무엇을 사칭해 어떤 방식으로 접근했고, 무엇을 요구했는지"를 담은
   한 문장. 사기라고 단정하지 말고 "~을 요구받음" 식으로 서술한다.
 - situation_summary: 상황의 흐름을 한국어 한 문장으로.
-- contact_channel: 연락·접촉 경로. 예: 전화, 문자, SNS, 앱, 웹사이트.
+- contact_channel: 연락·접촉 경로. 예: 전화, 문자, 카카오톡, SNS, 이메일, 웹사이트.
+  발화에 경로가 **명시되지 않았으면 절대 추측해 채우지 말고** []로 두고
+  unknown_fields에 "contact_channel"을 넣는다. "연락이 왔다", "물어봤다"만으로는
+  전화인지 문자인지 알 수 없다. 이런 경우가 추측의 대표적인 함정이다.
+  반대로 "전화가 와서", "문자를 받았는데", "카톡으로" 처럼 수단이 말에 드러나 있으면
+  그대로 채운다. 추측 금지는 없는 것을 지어내지 말라는 뜻이지, 나온 것을 버리라는
+  뜻이 아니다.
 - stated_identity: 상대가 밝힌 이름·기관·소속.
+  상대가 신분을 대지 않았다는 사실이 발화에 드러나면("모르는 사람", "낯선 번호",
+  "누군지 안 밝혔다") 값이 없는 것이 정상이다. []로 두고 unknown_fields에 넣지 마라.
+  발화만으로는 밝혔는지조차 알 수 없을 때만 unknown_fields에 넣는다.
 - key_context: 연락이나 행동의 이유·명목.
 - requested_action: 상대가 요청하거나 유도한 행동.
 - taken_action: 사용자가 **이미 실행한** 행동만. requested_action과 반드시 구분한다.
@@ -235,8 +278,26 @@ _STRUCT_KEYS = (
 )
 
 
+def transcript_of(chat_messages: list[dict]) -> str:
+    """대화를 한 덩어리 기록으로 만든다.
+
+    모델에 대화를 messages 로 그대로 넘기면 자기 차례로 알아듣고 대화를 이어 쓴다.
+    사실을 뽑거나 문서를 만들 때는 대화가 아니라 자료여야 한다.
+    """
+    return "\n".join(
+        f"{'사용자' if m.get('role') == 'user' else '상담봇'}: {m.get('content', '')}"
+        for m in chat_messages
+    )
+
+
 def structure_situation(chat_messages: list[dict]) -> dict:
-    """대화 전체를 읽어 구조화한다. 되물은 답까지 반영되도록 매번 전체를 다시 읽는다."""
+    """대화를 읽어 구조화한다. 되물은 답까지 반영되도록 매번 전체를 다시 읽는다.
+
+    넘길 대화는 호출부가 골라야 한다. 인사말이나 되묻기 질문 같은 짧은 어시스턴트
+    발화는 추출을 돕는다 — 빼 보면 key_context 가 통째로 비는 등 결과가 얇아진다.
+    반대로 위험 신호 목록이나 가이드처럼 긴 생성물이 끼면 모델이 추출을 그만두고
+    빈 객체를 돌려준다. chat.py 의 _structuring_history() 가 그 경계를 담당한다.
+    """
     raw = call_llm(STRUCTURING_SYSTEM, chat_messages, temperature=0, model=STRUCTURING_MODEL)
     data = parse_json_safe(raw, {})
     if not isinstance(data, dict):
@@ -254,16 +315,36 @@ def missing_required_fields(structured: dict) -> list[str]:
     unknown_fields에 있으면 모르는 것이므로 묻고, 그냥 비어 있으면 해당 사실이 없는
     것으로 보고 넘어간다. 이 구분이 없으면 "상대가 아무것도 요구 안 했다"는 사용자에게
     계속 같은 질문을 하게 된다.
+
     """
     unknown = set(structured.get("unknown_fields") or [])
     return [f for f in REQUIRED_FIELDS if not structured.get(f) and f in unknown]
 
 
-def ask_for(fields: list[str]) -> str:
+ASK_HEAD_SEARCH = "조금만 더 알려주시면 비슷한 사례를 찾아볼 수 있어요."
+# 진단 단계는 '없을 수도 있는' 값까지 묻는다. 해당 없으면 그렇게 답해도 된다는 것을
+# 머리말에서 먼저 알려야, 답할 게 없는 질문 앞에서 사용자가 막히지 않는다.
+ASK_HEAD_DETAIL = (
+    "이것만 알려주시면 더 정확하게 안내해드릴 수 있어요.\n해당 없는 건 \"없어요\"라고만 답해 주셔도 돼요."
+)
+
+
+def ask_for(fields: list[str], head: str = ASK_HEAD_SEARCH) -> str:
     picked = fields[:MAX_FIELDS_PER_QUESTION]
     lines = [FIELD_QUESTIONS[f] for f in picked if f in FIELD_QUESTIONS]
-    head = "조금만 더 알려주시면 비슷한 사례를 찾아볼 수 있어요."
     return head + "\n\n" + "\n".join(f"- {line}" for line in lines)
+
+
+def missing_diagnosis_fields(structured: dict, asked: set[str] | None = None) -> list[str]:
+    """사기로 판단된 뒤 남은 빈칸을 훑는다. 검색 관문과 달리 unknown 게이트를 두지 않는다.
+
+    여섯 필드 전부가 피해 단계 진단과 산출물의 정확도를 가르는 값이라, 비어 있으면
+    한 번은 묻는다. 사용자가 "그런 건 없었어요"라고 답하면 필드는 여전히 비지만
+    asked 에 남아 다시 묻지 않는다. 같은 질문의 반복을 막는 건 게이트가 아니라
+    이 기억이다.
+    """
+    asked = asked or set()
+    return [f for f in DIAGNOSIS_FIELDS if not structured.get(f) and f not in asked]
 
 
 # ---------------------------------------------------------------------------
@@ -538,35 +619,78 @@ _STAGE_MARKERS = [
     ("개인정보제공", ("주민", "신분증", "계좌번호", "비밀번호", "인증번호", "otp", "개인정보", "알려줬", "입력")),
 ]
 
-STAGE_SYSTEM = """당신은 금융사기 피해 진행 단계를 분류하는 보조 도구다.
-대화를 읽고 아래 JSON만 출력하라. 다른 텍스트 금지.
+def classify_damage_stage(structured: dict) -> str:
+    """이미 한 행동(taken_action)으로만 단계를 정한다. 근거가 없으면 빈 문자열.
 
-{"stage": "접촉초기" | "개인정보제공" | "링크클릭앱설치" | "입금송금"}
-
-단계 정의 (해당되는 가장 진행된 단계 하나를 고른다):
-- "입금송금": 이미 돈을 보냈거나 이체·환전을 완료함 → 가장 우선 판정
-- "링크클릭앱설치": 링크를 눌렀거나 앱·프로그램을 설치함 (돈은 아직 안 보냄)
-- "개인정보제공": 신분증·계좌번호·비밀번호 등 개인정보를 넘김 (링크/입금은 아직)
-- "접촉초기": 연락만 받았고 아직 아무것도 제공하지 않음
-판단이 어려우면 "접촉초기"로 둔다."""
-
-
-def classify_damage_stage(structured: dict, chat_messages: list[dict]) -> str:
-    """taken_action으로 먼저 규칙 판정하고, 확신이 안 서면 LLM에 넘긴다.
-
-    구조화 단계에서 이미 '이미 한 행동'을 뽑아뒀으므로 상당수는 여기서 확정된다.
+    추측하지 않는다. 단계는 가이드 전체를 가르는 값이라 잘못 잡으면 엉뚱한 안내가
+    통째로 나간다. LLM 에 맡겨 봤더니 요구받은 행동을 한 행동으로 오인해 과잉 진단이
+    났다. 모르면 비워 두고 사용자에게 직접 묻는 편이 정확하고 단순하다.
     """
     actions = as_text(structured.get("taken_action")).lower()
     if actions:
         for stage, markers in _STAGE_MARKERS:
             if any(m in actions for m in markers):
                 return stage
-    elif "taken_action" not in (structured.get("unknown_fields") or []):
-        return "접촉초기"
+        return "접촉초기"   # 한 행동은 있지만 어느 표지에도 안 걸린다 = 아직 초기
 
-    raw = call_llm(STAGE_SYSTEM, chat_messages, temperature=0)
-    stage = parse_json_safe(raw, {}).get("stage")
-    return stage if stage in DAMAGE_STAGES else "접촉초기"
+    # 비어 있을 때는 '아직 못 들었다'와 '한 게 없다고 확인됐다'를 갈라야 한다.
+    # 이 구분이 없으면 "아무것도 안 했어"라고 답한 사용자에게 같은 질문을 되풀이한다.
+    if "taken_action" in (structured.get("unknown_fields") or []):
+        return ""
+    return "접촉초기"
+
+
+# 사용자에게 보여줄 단계 설명. 내부 코드값("링크클릭앱설치")은 읽히지 않는다.
+STAGE_LABELS = {
+    "접촉초기": "연락만 받았고, 아직 아무것도 주거나 누르지 않은 단계",
+    "개인정보제공": "이름·주민번호·계좌번호 같은 개인정보를 넘긴 단계",
+    "링크클릭앱설치": "링크를 누르거나 앱을 설치한 단계",
+    "입금송금": "이미 돈을 보낸 단계",
+}
+
+# 단계 확인을 몇 번까지 되묻는가. 이 횟수를 넘기면 더 묻지 않고 사용자가 마지막으로
+# 설명한 내용으로 진단해 가이드로 넘어간다. 판정이 같은 단계를 고집할 때 사용자가
+# 빠져나갈 길이 없으면 안 된다.
+MAX_STAGE_CHECK_ROUNDS = 3
+
+# 단계를 못 정했을 때 사용자에게 보여줄 선택지.
+STAGE_OPTIONS = "\n".join(f"- {STAGE_LABELS[k]}" for k in DAMAGE_STAGES)
+
+
+def coverage_signals(results: list[dict]) -> list[str]:
+    """판정에서 실제로 일치한 축을 사용자 값으로 되돌려 위험 신호로 쓴다.
+
+    LLM 을 새로 부르지 않는다. 어느 점이 알려진 수법과 겹치는지는 2단계 판정이 이미
+    matched_axes 로 내놓았고, 그게 곧 위험 신호다. 따로 생성하면 호출이 늘고 근거가
+    판정과 어긋난다.
+    """
+    labels = {db: label for db, label, _ in AXES}
+    fields = {db: user_field for db, _, user_field in AXES}
+    top = results[0] if results else {}
+    signals = []
+    for axis in top.get("matched_axes", []):
+        value = as_text(top.get("_structured", {}).get(fields[axis]))
+        signals.append(f"{labels[axis]} · {value}" if value else labels[axis])
+    return signals
+
+
+def make_stage_check(structured: dict, results: list[dict], stage: str) -> str:
+    """위험 신호와 피해 단계를 보여주고 맞는지 묻는 문안. LLM 호출 없음."""
+    for r in results[:1]:
+        r["_structured"] = structured
+    signals = coverage_signals(results)
+
+    lines = ["지금 상황에서 이런 점이 알려진 사기 수법과 겹쳐요.", ""]
+    lines += [f"- {sign}" for sign in signals] or ["- 상대가 밝힌 소속과 요구한 행동"]
+
+    if stage:
+        lines += ["", f"그리고 지금은 **{STAGE_LABELS[stage]}**로 보여요.", "",
+                  "맞으면 **맞아요**, 다르면 무엇이 다른지 편하게 말씀해 주세요."]
+    else:
+        lines += ["", "이 중에 이미 하신 게 있나요? 해당하는 것을 말씀해 주세요.", "",
+                  STAGE_OPTIONS, "",
+                  "아직 아무것도 안 하셨다면 그렇게 말씀해 주세요."]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -581,9 +705,40 @@ GUIDE_INTRO_SYSTEM = """사용자의 상황에 공감하는 문장 1~2개를 한
 
 
 def make_guide(stage: str, chat_messages: list[dict]) -> str:
-    intro = call_llm(GUIDE_INTRO_SYSTEM, chat_messages, temperature=0.7)
-    return intro.strip() + "\n\n" + guide_templates.resolve(stage)
+    """공감 도입부 한두 문장 + 단계별 고정 가이드 + 도구 3종을 쓰는 법.
 
+    도입부도 대화를 기록으로 넘긴다. messages 로 그대로 주면 모델이 직전 어시스턴트
+    메시지의 형식을 따라 해, 단계 확인 화면의 위험 신호 목록을 그대로 반복한다.
+
+    마무리(resolve_closing)까지 여기서 붙이는 것은, 이 메시지가 대화의 종착점이기
+    때문이다. 화면 아래 버튼 3개만 덩그러니 두면 무엇부터 눌러야 할지 알 수 없다.
+    쓰는 순서가 단계마다 갈리므로 마무리도 단계별로 다르다.
+    """
+    intro = call_llm(
+        GUIDE_INTRO_SYSTEM,
+        [{"role": "user", "content": "--- 대화 기록 ---\n" + transcript_of(chat_messages)}],
+        temperature=0.7,
+    )
+    return "\n\n".join([
+        intro.strip(),
+        guide_templates.resolve(stage),
+        guide_templates.resolve_closing(stage),
+    ])
+
+
+# 세 도구에 공통으로 붙는 머리말.
+#
+# 산출물의 화자는 챗봇이 아니라 사용자 본인이다. 이걸 명시하지 않으면 모델이 대화의
+# 다음 차례로 알아듣고 "안녕하세요, 텅장지키미예요"라고 자기를 소개하거나, 문서 대신
+# 상담 조언을 이어 쓴다.
+TOOL_COMMON = """당신은 사용자가 쓸 문서를 대신 작성하는 도구다. 대화의 상대역이 아니다.
+
+- 문서의 주체는 사용자 본인이다. 챗봇 이름('텅장지키미')이나 상담사 정체를 절대 쓰지 마라.
+- 사용자에게 말을 걸거나, 조언하거나, 되묻지 마라. 요청받은 문서만 출력하라.
+- 대화를 이어서 답하지 마라. 대화 기록은 사실을 뽑아 쓸 자료일 뿐이다.
+- 대화 기록의 '상담봇'은 이 서비스이지 사건의 상대방이 아니다. 문서에 등장시키지 마라.
+  보존·신고할 증거는 사기 의심자와 주고받은 것이지 이 상담 기록이 아니다.
+- 대화 기록에 없는 사실을 지어내지 마라."""
 
 TOOL_SYSTEMS = {
     "call_script": """사용자가 은행·경찰에 신고 전화할 때 수화기에 대고 그대로 읽을
@@ -611,14 +766,36 @@ TOOL_SYSTEMS = {
 대화에 없는 정보는 [확인 필요]로 표시. 추측 금지.""",
     "checklist": """증거 보존 체크리스트를 써라. 체크박스(- [ ]) 형식.
 항목: 대화 캡처(날짜 보이게), 상대 프로필/계정 캡처, 송금 내역 캡처,
-통화 녹음 백업, 상대 계좌·전화번호 기록, 원본 삭제 금지 안내
-사용자 상황(피해 단계)에 맞는 항목 위주로 6~10개.""",
+통화 녹음 백업, 상대 계좌·전화번호 기록, 주고받은 원본 대화 삭제 금지 안내
+사용자 상황(피해 단계)에 맞는 항목 위주로 6~10개.
+
+증거 보존을 이유로 피해를 키우는 행동을 절대 시키지 마라. 특히:
+- 악성앱 삭제, 비행기 모드 전환, 카드 정지, 지급정지는 캡처보다 먼저다.
+  "지우기 전에 캡처하세요" 같은 항목을 쓰지 마라. 앱은 이름만 적어 두면 된다.
+- 상대와의 연락을 유지하거나 증거를 더 받아내려 대화를 이어가게 하지 마라.
+'삭제 금지'는 이미 가지고 있는 문자·대화·거래내역 원본에만 해당한다.""",
 }
 
 
 def make_tool(tool: str, stage: str, chat_messages: list[dict]) -> str:
-    context = chat_messages + [{"role": "user", "content": f"(시스템 참고: 판정된 피해 단계는 '{stage}')"}]
-    return call_llm(TOOL_SYSTEMS[tool], context, temperature=0.4)
+    """대응 도구 3종을 만든다.
+
+    대화를 messages 로 그대로 넘기면 모델이 그 대화의 다음 차례로 알아듣는다. 그러면
+    챗봇 말투로 조언을 이어 쓰거나 스스로를 '텅장지키미'라고 소개해 버린다. 산출물의
+    화자는 챗봇이 아니라 사용자이므로, 대화는 한 덩어리 '자료'로 넘긴다.
+    """
+    transcript = transcript_of(chat_messages)
+    prompt = (
+        f"판정된 피해 단계: {stage}\n\n"
+        "아래는 피해자와 상담봇이 나눈 대화 기록이다. 사실을 뽑아 쓸 자료이며,\n"
+        "이 대화를 이어서 말하는 것이 아니다.\n\n"
+        f"--- 대화 기록 시작 ---\n{transcript}\n--- 대화 기록 끝 ---"
+    )
+    return call_llm(
+        TOOL_COMMON + "\n\n" + TOOL_SYSTEMS[tool],
+        [{"role": "user", "content": prompt}],
+        temperature=0.4,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -709,12 +886,16 @@ def _contact_section(category: str, identity: str) -> tuple[str, str]:
     return "\n\n".join(blocks), other_routes
 
 
-def make_agency_inquiry_script(structured: dict) -> str:
-    """사기로 단정할 수 없을 때 주는 안내(4-B).
+def make_agency_inquiry_script(structured: dict) -> tuple[str, str]:
+    """사기로 단정할 수 없을 때 주는 안내(4-B). (안내문, 전화 대본) 을 돌려준다.
 
     한 번의 호출로 대본과 갈래를 함께 받는다. 번호는 LLM 이 만들지 않는다 —
     guide_templates 에 하드코딩된 것만 쓰고, LLM 은 어느 갈래인지 고르기만 한다.
     지어낸 번호를 주면 사용자가 엉뚱한 상대에게 자기 상황을 그대로 설명하게 된다.
+
+    대본을 안내문에 섞지 않고 따로 돌려주는 것은, 화면에서 '📞 신고 전화 대본'
+    버튼을 눌렀을 때만 내보내기 위해서다. LLM 호출은 여기서 한 번뿐이므로
+    버튼을 누르는 시점에 다시 부르지 않는다.
     """
     raw = call_llm(
         AGENCY_INQUIRY_SYSTEM,
@@ -732,8 +913,8 @@ def make_agency_inquiry_script(structured: dict) -> str:
 
     identity = as_text(structured.get("stated_identity"))
     contact_block, other_routes = _contact_section(category, identity)
-    return guide_templates.SELF_CHECK_GUIDE.format(
+    guide = guide_templates.SELF_CHECK_GUIDE.format(
         contact_block=contact_block,
         other_routes=other_routes,
-        generated_script=script,
     )
+    return guide, script
