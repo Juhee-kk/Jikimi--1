@@ -13,17 +13,10 @@ from components import fmt, queue_chat_prefill, render_quiz
 _NEWS_ARTICLES = scam_feed.load_news_articles()
 RECENT_REPORT_COUNTS = scam_feed.count_by_category(_NEWS_ARTICLES, days=30)
 
-# 신종 감지 카드: 세션당 한 번 무작위 4개를 뽑아 고정하고, '다른 수법 보기'로만 다시 뽑는다.
-_NOVEL_POOL_SIZE = len(scam_feed.novel_scam_pool(_NEWS_ARTICLES, days=30))
-
-
-def _roll_novel_scams() -> None:
-    st.session_state["novel_scams"] = scam_feed.sample_novel_scams(_NEWS_ARTICLES, limit=4, days=30)
-
-
-if "novel_scams" not in st.session_state:
-    _roll_novel_scams()
-NEWLY_DETECTED_SCAMS = st.session_state["novel_scams"]
+# 신종 감지 뉴스: 최근 30일 카드 전체를 감지일 최신순으로 두고 4개씩 페이지로 넘겨 본다.
+NEWLY_DETECTED_SCAMS = scam_feed.novel_scam_pool(_NEWS_ARTICLES, days=30)
+NOVEL_PAGE_SIZE = 4
+NOVEL_PAGE_COUNT = max(1, math.ceil(len(NEWLY_DETECTED_SCAMS) / NOVEL_PAGE_SIZE))
 VOICE_PHISHING_CSV = Path(__file__).resolve().parents[1] / "data" / "경찰청_보이스피싱 현황_20251231.csv"
 
 st.markdown(
@@ -45,6 +38,18 @@ st.markdown(
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
+    }
+    .news-section-note {
+        text-align: right;
+        font-size: 0.75rem;
+        opacity: 0.55;
+        margin-top: 0.85rem;
+    }
+    @media (max-width: 760px) {
+        .news-section-note {
+            text-align: left;
+            margin-top: 0.2rem;
+        }
     }
     .news-new-scam-card {
         height: auto !important;
@@ -69,6 +74,29 @@ st.markdown(
         font-size: 0.72rem;
         font-weight: 700;
         color: var(--dj-primary-dark);
+    }
+    .news-new-scam-method {
+        font-size: 0.82rem;
+        line-height: 1.6;
+        margin-top: 0.55rem;
+        color: var(--dj-text);
+    }
+    .news-new-scam-method-label {
+        display: inline-block;
+        margin-right: 0.4rem;
+        border-radius: var(--dj-radius-pill);
+        background: var(--dj-bg);
+        padding: 0.1rem 0.5rem;
+        font-size: 0.68rem;
+        font-weight: 800;
+        color: var(--dj-primary-dark);
+        vertical-align: 0.05rem;
+    }
+    .news-new-scam-summary {
+        font-size: 0.8rem;
+        opacity: 0.7;
+        line-height: 1.6;
+        margin-top: 0.45rem;
     }
     .news-new-scam-link-btn {
         display: inline-flex;
@@ -149,6 +177,15 @@ st.markdown(
             width: 2.65rem !important;
             min-height: 220px;
         }
+    }
+    div.st-key-novel_pager {
+        margin-top: 0.2rem;
+    }
+    div.st-key-novel_pager .stButton > button {
+        min-height: 2.2rem;
+        padding: 0.2rem 0.4rem;
+        font-size: 0.82rem;
+        font-weight: 700;
     }
     .news-trend-highlight {
         text-align: right;
@@ -497,7 +534,7 @@ def render_voice_phishing_trends() -> None:
     st.markdown(
         '<div class="news-evidence-grid">'
         '<div class="news-chart-card">'
-        '<div class="news-governance-message">보이스피싱 피해액이 빠르게 증가하고 있어요.</div>'
+        '<div class="news-governance-message">2025년까지의 보이스피싱 피해 현황이에요</div>'
         f'{render_voice_combo_chart(rows)}'
         '<div class="news-chart-legend">'
         '<span><span class="news-legend-dot" style="background:#D8D2C8;"></span>발생건수</span>'
@@ -531,20 +568,6 @@ if st.session_state.get("history_log"):
         ''',
         unsafe_allow_html=True,
     )
-
-# --- 상단 요약 위젯 ---
-st.markdown(
-    '''
-    <div class="dj-card dj-card-dark" style="margin-top:1rem;">
-        <strong>청년층 대상 주요 수법은 다음과 같아요</strong><br>
-        처음엔 전화 한 통, 문자 하나, 알바 제안 하나처럼 보여도 마지막엔 송금·대출·개인정보 요구로 이어집니다.<br>
-        핵심은 하나예요. <strong>"먼저 돈을 넣어야 한다"</strong>는 말이 나오면 멈추고 확인하세요.
-    </div>
-    ''',
-    unsafe_allow_html=True,
-)
-
-st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
 
 
 @st.dialog("수법 자세히 보기")
@@ -616,38 +639,51 @@ def render_new_scam_card(method: dict, index: int) -> None:
         if article_url
         else f'<span class="news-new-scam-chip">{fmt(article_title)}</span>'
     )
+    method_html = (
+        f'<div class="news-new-scam-method">'
+        f'<span class="news-new-scam-method-label">수법</span>{fmt(method["method"])}</div>'
+        if method.get("method")
+        else ""
+    )
+    summary_html = (
+        f'<div class="news-new-scam-summary">{fmt(method["summary"])}</div>'
+        if method.get("summary")
+        else ""
+    )
     content_col, action_col = st.columns([32, 1], gap="small")
     with content_col:
+        # 빈 문자열이 섞여도 줄바꿈이 생기지 않도록 한 줄로 이어 붙인다.
+        # (중간에 빈 줄이 들어가면 마크다운이 뒤쪽 HTML을 코드 블록으로 렌더한다.)
         st.markdown(
-            f'''
-            <div class="news-new-scam-card">
-                <span class="dj-badge" style="background:var(--dj-bg); color:var(--dj-primary-dark); font-size:0.68rem; padding:0.2rem 0.7rem; display:inline-block;">{method["tag"]}</span>
-                <div class="news-new-scam-body">
-                    <div>
-                        <div class="dj-headline" style="font-size:1.05rem; line-height:1.4;">{fmt(method["title"])}</div>
-                        <div style="font-size:0.82rem; opacity:0.76; line-height:1.6; margin-top:0.5rem;">{fmt(method["summary"])}</div>
-                        <div class="news-new-scam-meta">
-                            <span class="news-new-scam-chip">감지일 {method.get("date", "확인 중")}</span>
-                            {article_html}
-                        </div>
-                    </div>
-                    <div class="news-new-scam-panel">
-                        <strong>이 말 나오면 의심하세요</strong>
-                        <ul>{flags_html}</ul>
-                        <div style="margin-top:0.65rem;"><strong>이렇게 피해요</strong><br>{fmt(method["how_to_avoid"])}</div>
-                    </div>
-                </div>
-            </div>
-            ''',
+            '<div class="news-new-scam-card">'
+            '<span class="dj-badge" style="background:var(--dj-bg); color:var(--dj-primary-dark); font-size:0.68rem; padding:0.2rem 0.7rem; display:inline-block;">'
+            f'{method["tag"]}</span>'
+            '<div class="news-new-scam-body"><div>'
+            f'<div class="dj-headline" style="font-size:1.05rem; line-height:1.4;">{fmt(method["title"])}</div>'
+            f'{method_html}{summary_html}'
+            '<div class="news-new-scam-meta">'
+            f'<span class="news-new-scam-chip">감지일 {method.get("date", "확인 중")}</span>'
+            f'{article_html}'
+            '</div></div>'
+            '<div class="news-new-scam-panel">'
+            '<strong>이 말 나오면 의심하세요</strong>'
+            f'<ul>{flags_html}</ul>'
+            f'<div style="margin-top:0.65rem;"><strong>이렇게 피해요</strong><br>{fmt(method["how_to_avoid"])}</div>'
+            '</div></div></div>',
             unsafe_allow_html=True,
         )
     with action_col:
         if st.button("상담하기", key=f"new_method_chat_{index}", use_container_width=True):
-            queue_chat_prefill(f'"{method["title"]}" 이거랑 비슷한 걸 받았어요')
+            queue_chat_prefill(f'"{method.get("method") or method["title"]}" 이거랑 비슷한 걸 받았어요')
 
 
-st.markdown('<div class="dj-headline" style="font-size:1.35rem; margin-top:0.4rem;">1. 청년층 대상 주요 수법 8가지</div>', unsafe_allow_html=True)
-st.caption("자주 반복되는 8가지 수법을 먼저 확인해보세요.")
+st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+fixed_head_col, fixed_note_col = st.columns([2, 1])
+with fixed_head_col:
+    st.markdown('<div class="dj-headline" style="font-size:1.35rem; margin-top:0.4rem;">1. 청년층 대상 주요 수법 8가지</div>', unsafe_allow_html=True)
+    st.caption("자주 반복되는 8가지 수법을 먼저 확인해보세요.")
+with fixed_note_col:
+    st.markdown('<div class="news-section-note">※ 표기된 건수는 최근 30일간 언론 보도 건수 기준.</div>', unsafe_allow_html=True)
 
 fixed_methods = [fixed_method_view(type_dict) for type_dict in data.FRAUD_TYPES]
 fixed_cols = st.columns(4)
@@ -655,22 +691,46 @@ for i, method in enumerate(fixed_methods):
     with fixed_cols[i % 4], st.container(key=f"news_fixed_method_{i}"):
         render_method_card(method, "fixed_method", i)
 
+def render_novel_pagination() -> None:
+    """4개씩 끊어 보여주는 페이지 이동 바 (← / 1 2 3 / →). 현재 페이지는 primary 버튼으로 표시."""
+    page = st.session_state["novel_page"]
+    with st.container(key="novel_pager"):
+        _, nav_col, _ = st.columns([1, 2, 1])
+        with nav_col:
+            cols = st.columns(NOVEL_PAGE_COUNT + 2)
+            if cols[0].button("←", key="novel_page_prev", disabled=page == 0, use_container_width=True):
+                st.session_state["novel_page"] = page - 1
+                st.rerun()
+            for number in range(NOVEL_PAGE_COUNT):
+                if cols[number + 1].button(
+                    str(number + 1),
+                    key=f"novel_page_{number}",
+                    type="primary" if number == page else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state["novel_page"] = number
+                    st.rerun()
+            if cols[-1].button(
+                "→", key="novel_page_next", disabled=page >= NOVEL_PAGE_COUNT - 1, use_container_width=True
+            ):
+                st.session_state["novel_page"] = page + 1
+                st.rerun()
+
+
 st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
-novel_head_col, novel_roll_col = st.columns([3, 1])
-with novel_head_col:
-    st.markdown('<div class="dj-headline" style="font-size:1.35rem;">2. 신종 감지된 수법</div>', unsafe_allow_html=True)
-    st.caption("기존 분류에 딱 들어맞지 않는 새 패턴을 따로 모아볼 수 있어요.")
-with novel_roll_col:
-    if _NOVEL_POOL_SIZE > len(NEWLY_DETECTED_SCAMS) and st.button(
-        "다른 수법 보기 🔄", key="reroll_novel", use_container_width=True
-    ):
-        _roll_novel_scams()
-        st.rerun()
+st.markdown('<div class="dj-headline" style="font-size:1.35rem;">2. 신종 수법 감지 뉴스</div>', unsafe_allow_html=True)
+st.caption(
+    f"최근 30일 동안 보도된 뉴스 중, 기존 사기 유형과는 조금 다른 흐름을 보이는 사례 {len(NEWLY_DETECTED_SCAMS)}건이에요. "
+)
 
 if NEWLY_DETECTED_SCAMS:
-    for i, method in enumerate(NEWLY_DETECTED_SCAMS):
+    st.session_state["novel_page"] = min(st.session_state.get("novel_page", 0), NOVEL_PAGE_COUNT - 1)
+    start = st.session_state["novel_page"] * NOVEL_PAGE_SIZE
+    for i, method in enumerate(NEWLY_DETECTED_SCAMS[start : start + NOVEL_PAGE_SIZE], start=start):
         with st.container(key=f"news_new_method_{i}"):
             render_new_scam_card(method, i)
+    if NOVEL_PAGE_COUNT > 1:
+        render_novel_pagination()
 else:
     st.markdown(
         f'''

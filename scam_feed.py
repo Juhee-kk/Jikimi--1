@@ -4,7 +4,7 @@ data/structured_scam_articles.jsonl(뉴스 구조화 자료)를 scam_data_pipeli
 통과시켜, 뉴스 페이지(pages_files/news.py)가 쓰는 두 가지를 만든다.
 
 - count_by_category(): 최근 N일 카테고리별 뉴스 기사 수 (섹션 1 배지)
-- recent_novel_scams(): is_youth_targeted=true AND is_novel=true 기사 중 품질 필터 통과분 최신순 상위 N개 (섹션 2 카드)
+- novel_scam_pool(): is_youth_targeted=true AND is_novel=true 기사 중 품질 필터 통과분 최신순 전체 (섹션 2 카드)
 
 카테고리 ID는 data/taxonomy/scam_taxonomy.json 기준이고, mock_data.FRAUD_TYPES의 id와
 1:1로 일치한다(voice_phishing, loan_scam, smishing, messenger_impersonation,
@@ -13,7 +13,6 @@ romance_scam, investment_scam, secondhand_scam, part_time_scam).
 
 from __future__ import annotations
 
-import random
 import re
 from datetime import date, timedelta
 
@@ -102,18 +101,26 @@ def _fmt_detected_date(row: dict) -> str:
 def _to_new_scam_card(row: dict) -> dict:
     """구조화 행 → render_new_scam_card가 먹는 카드 dict.
 
-    필드 소스: 제목=modus_operandi_ko(비면 headline_ko) / 요약=summary_ko(비면 headline_ko) /
-    감지일=article_published_at / url=article_url / "이 말 나오면 의심하세요"=warning_signs /
-    "이렇게 피해요"=response_guide_ko (비면 _AVOID_GUIDE).
+    필드 소스: 제목=headline_ko(뉴스 헤드라인, 비면 modus_operandi_ko) /
+    수법=modus_operandi_ko / 요약=summary_ko(헤드라인과 같으면 생략) /
+    감지일=article_published_at / url=article_url /
+    "이 말 나오면 의심하세요"=warning_signs / "이렇게 피해요"=response_guide_ko (비면 _AVOID_GUIDE).
     as_text로 "없음"·"[]" 같은 빈값 표기를 걸러낸다.
     """
     red_flags = [flag for sign in (row.get("warning_signs") or []) if (flag := as_text(sign))]
     if not red_flags:
         red_flags = [as_text(row.get("lure_hook")) or "출처가 불분명한 접근"]
+    headline = _clean_headline(row.get("headline_ko"))
+    method = as_text(row.get("modus_operandi_ko"))
+    summary = _clean_headline(as_text(row.get("summary_ko")))
+    # summary_ko가 헤드라인을 그대로 옮겨온 기사가 있어, 같은 문장이면 요약을 비운다.
+    if summary and summary == headline:
+        summary = ""
     return {
         "tag": "신종 감지",
-        "title": as_text(row.get("modus_operandi_ko")) or _clean_headline(row.get("headline_ko")) or "신종 수법",
-        "summary": as_text(row.get("summary_ko")) or _clean_headline(row.get("headline_ko")),
+        "title": headline or method or "신종 수법",
+        "method": method,
+        "summary": summary,
         "red_flags": red_flags,
         "how_to_avoid": as_text(row.get("response_guide_ko")) or _AVOID_GUIDE,
         "article_title": as_text(row.get("publisher")) or "관련 기사",
@@ -152,16 +159,3 @@ def novel_scam_pool(
         seen_tokens.append(tokens)
         pool.append(_to_new_scam_card(row))
     return pool
-
-
-def sample_novel_scams(
-    rows: list[dict], *, limit: int = 4, days: int = 30, as_of: date | None = None
-) -> list[dict]:
-    """novel_scam_pool에서 무작위로 limit개를 뽑아 감지일 최신순으로 반환.
-
-    호출할 때마다 새로 뽑히므로, '다른 수법 보기' 버튼에서 다시 호출하면 조합이 바뀐다.
-    """
-    pool = novel_scam_pool(rows, days=days, as_of=as_of)
-    picked = random.sample(pool, min(limit, len(pool)))
-    picked.sort(key=lambda card: card["date"], reverse=True)
-    return picked
