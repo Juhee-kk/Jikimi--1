@@ -5,9 +5,9 @@ from pathlib import Path
 
 import streamlit as st
 
-import mock_data as data
+import content
 import scam_feed
-from components import fmt, queue_chat_prefill, render_quiz
+from components import fmt, queue_chat_prefill
 
 # 해당 날짜(오늘) 기준 뒤로 30일 창으로 실데이터(data/structured_scam_articles.jsonl)를 집계한다.
 _NEWS_ARTICLES = scam_feed.load_news_articles()
@@ -558,17 +558,6 @@ def render_voice_phishing_trends() -> None:
 
 render_voice_phishing_trends()
 
-# --- 개인화 알림 배너 ---
-if st.session_state.get("history_log"):
-    st.markdown(
-        '''
-        <div class="dj-card dj-card-yellow" style="margin-top:1rem;">
-            저번에 물어보신 거랑 비슷한 수법이 또 올라왔어요. 같은 조직이 계속 돌리는 중일 수 있어요.
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-
 
 @st.dialog("수법 자세히 보기")
 def show_method_detail(method: dict) -> None:
@@ -685,7 +674,7 @@ with fixed_head_col:
 with fixed_note_col:
     st.markdown('<div class="news-section-note">※ 표기된 건수는 최근 30일간 언론 보도 건수 기준.</div>', unsafe_allow_html=True)
 
-fixed_methods = [fixed_method_view(type_dict) for type_dict in data.FRAUD_TYPES]
+fixed_methods = [fixed_method_view(type_dict) for type_dict in content.FRAUD_TYPES]
 fixed_cols = st.columns(4)
 for i, method in enumerate(fixed_methods):
     with fixed_cols[i % 4], st.container(key=f"news_fixed_method_{i}"):
@@ -735,13 +724,58 @@ else:
     st.markdown(
         f'''
         <div class="dj-card dj-card-white" style="text-align:center;">
-            {fmt(data.NEWS_EMPTY_STATES["no_new"])}
+            {fmt(content.NEWS_EMPTY_MESSAGE)}
         </div>
         ''',
         unsafe_allow_html=True,
     )
 
+def render_quiz() -> None:
+    """금융사기 상식 퀴즈. 채점하면 문항별 해설과 점수 구간 배지를 함께 낸다."""
+    st.session_state.setdefault("quiz_best_score", None)
+
+    st.caption(content.QUIZ_CAPTION)
+
+    with st.form("quiz_form"):
+        for i, question in enumerate(content.QUIZ_QUESTIONS):
+            st.markdown(f"**문제 {i + 1}.** {question['question']}")
+            st.radio("보기", question["options"], key=f"quiz_{i}", index=None, label_visibility="collapsed")
+        submitted = st.form_submit_button("도전! (1분이면 끝나요)")
+
+    if not submitted:
+        return
+
+    score = 0
+    for i, question in enumerate(content.QUIZ_QUESTIONS):
+        chosen = st.session_state.get(f"quiz_{i}")
+        is_correct = chosen == question["options"][question["answer"]]
+        score += int(is_correct)
+        with st.expander(f'{"✅" if is_correct else "❌"} 문제 {i + 1} 해설', expanded=not is_correct):
+            st.markdown(fmt(question["explanation"]), unsafe_allow_html=True)
+
+    if st.session_state.quiz_best_score is None or score > st.session_state.quiz_best_score:
+        st.session_state.quiz_best_score = score
+
+    band = next(b for b in content.QUIZ_RESULT_BANDS if b["min"] <= score <= b["max"])
+    st.markdown(
+        f'''
+        <div class="dj-card dj-card-coral" style="text-align:center; margin-top:1rem;">
+            <div style="font-size:1.5rem; font-weight:700;">{band["badge"]}</div>
+            <div style="margin-top:0.4rem;">{score}/{len(content.QUIZ_QUESTIONS)} · {band["message"]}</div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+    share_col, ask_col = st.columns(2)
+    with share_col:
+        if st.button(content.QUIZ_SHARE_LABEL, use_container_width=True):
+            st.toast("공유 링크를 복사했어요! (데모)")
+    with ask_col:
+        if st.button("혹시 지금 겪고 있는 일이 있어요? 바로 물어보기 →", use_container_width=True):
+            st.switch_page("pages_files/chat.py")
+
+
 st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
-st.markdown('<div class="dj-headline" style="font-size:1.35rem;">3. 퀴즈 섹션</div>', unsafe_allow_html=True)
+st.markdown('<div class="dj-headline" style="font-size:1.35rem;">3. 금융사기 상식 퀴즈</div>', unsafe_allow_html=True)
 with st.container(key="quiz_box"):
     render_quiz()

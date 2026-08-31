@@ -6,7 +6,7 @@ data/structured_scam_articles.jsonl(뉴스 구조화 자료)를 scam_data_pipeli
 - count_by_category(): 최근 N일 카테고리별 뉴스 기사 수 (섹션 1 배지)
 - novel_scam_pool(): is_youth_targeted=true AND is_novel=true 기사 중 품질 필터 통과분 최신순 전체 (섹션 2 카드)
 
-카테고리 ID는 data/taxonomy/scam_taxonomy.json 기준이고, mock_data.FRAUD_TYPES의 id와
+카테고리 ID는 data/taxonomy/scam_taxonomy.json 기준이고, content.FRAUD_TYPES의 id와
 1:1로 일치한다(voice_phishing, loan_scam, smishing, messenger_impersonation,
 romance_scam, investment_scam, secondhand_scam, part_time_scam).
 """

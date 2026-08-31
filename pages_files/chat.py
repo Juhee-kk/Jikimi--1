@@ -53,7 +53,7 @@
 import requests
 import streamlit as st
 
-import mock_data as data
+import content
 import services
 from components import render_chat_message
 
@@ -76,7 +76,7 @@ CLOSING_MESSAGE = "이 상담은 여기까지예요. 새 상담 버튼을 눌러
 def _reset_state() -> None:
     st.session_state.chat_phase = "collecting"
     st.session_state.chat_messages = [
-        {"role": "assistant", "content": data.CHAT_OPENING_MESSAGE, "kind": "ask"}
+        {"role": "assistant", "content": content.CHAT_OPENING_MESSAGE, "kind": "ask"}
     ]
     st.session_state.structured = {}
     st.session_state.follow_up_rounds = 0
@@ -271,7 +271,7 @@ def handle_user_message(text: str) -> None:
     append("user", text)
 
     if services.contains_sensitive_info(text):
-        reply(data.SENSITIVE_INFO_WARNING)
+        reply(content.SENSITIVE_INFO_WARNING)
         return
 
     phase = st.session_state.chat_phase
@@ -383,7 +383,7 @@ if st.session_state.chat_phase == "insufficient" and st.session_state.get("inqui
 st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
 submission = st.chat_input(
-    data.CHAT_INPUT_PLACEHOLDER,
+    content.CHAT_INPUT_PLACEHOLDER,
     accept_file="multiple",
     file_type=["png", "jpg", "jpeg", "mp3", "m4a", "wav"],
 )

@@ -1,4 +1,9 @@
-"""텅장지키미 공유 UI 렌더 함수."""
+"""여러 페이지가 함께 쓰는 UI 조각.
+
+한 페이지에서만 쓰는 렌더 함수는 그 페이지 파일에 둔다
+(예: 퀴즈는 pages_files/news.py, 뉴스 카드도 news.py).
+여기 남는 것은 전역 CSS, 상단 내비, 푸터, 말풍선, 마스코트처럼 화면을 가로지르는 것들이다.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +16,7 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image
 
-import mock_data as data
+from content import FOOTER_TEXT
 
 
 def fmt(text: str) -> str:
@@ -157,6 +162,15 @@ def inject_custom_css() -> None:
         /* 푸터 밴드 (코랄, 상단 라운드) */
         .dj-full-bleed.dj-footer-band { background: var(--dj-primary); color: var(--dj-white); border-radius: 56px 56px 0 0; margin-top: 2.5rem; padding-top: 3rem; }
 
+        /* 홈 — 진입 카드 4개 (카드 + 하단 CTA 버튼 높이 맞춤) */
+        div[class*="st-key-entry_card_"] { display: flex; flex-direction: column; height: 100%; }
+        div[class*="st-key-entry_card_"] .dj-card { flex: 1; min-height: 158px; }
+        div[class*="st-key-entry_card_"] .stButton { margin-top: 0.5rem; }
+        div[class*="st-key-entry_card_"] .stButton > button {
+            background: var(--dj-white); border: 1px solid var(--dj-border);
+            font-size: 0.82rem; height: 40px;
+        }
+
         /* 요즘 수법 — 카드뉴스 */
         div[class*="st-key-news_card_"] { display: flex; flex-direction: column; height: 100%; margin-bottom: 1rem; }
         div[class*="st-key-news_card_"] .dj-card { padding: 1.1rem; flex: 1; }
@@ -247,7 +261,7 @@ def inject_custom_css() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 레이아웃 조각
+# 레이아웃 (상단 내비 · 푸터)
 # ---------------------------------------------------------------------------
 
 def render_top_nav(pages: list) -> None:
@@ -260,33 +274,7 @@ def render_top_nav(pages: list) -> None:
 
 
 def render_footer() -> None:
-    st.markdown(f'<div class="dj-footer">{fmt(data.FOOTER_TEXT)}</div>', unsafe_allow_html=True)
-
-
-def render_dark_band(title: str, steps: list[dict]) -> None:
-    """딥그린 풀블리드 3단계 섹션."""
-    step_colors = ["var(--dj-card-coral)", "var(--dj-card-blue)", "var(--dj-card-green)"]
-    steps_html = "".join(
-        f'''
-        <div style="flex:1; min-width:150px;">
-            <div style="width:56px; height:56px; border-radius:50%; background:{color};
-                        display:flex; align-items:center; justify-content:center;
-                        font-weight:700; font-size:1.3rem; margin:0 auto; color: var(--dj-text);">{step["num"]}</div>
-            <div style="font-weight:700; margin-top:0.7rem;">{fmt(step["title"])}</div>
-            <div style="font-size:0.85rem; margin-top:0.3rem; opacity:0.8;">{fmt(step["desc"])}</div>
-        </div>
-        '''
-        for step, color in zip(steps, step_colors)
-    )
-    st.markdown(
-        f'''
-        <div class="dj-full-bleed dj-dark"><div class="dj-full-bleed-inner">
-            <div class="dj-headline" style="font-size:1.5rem; margin-bottom:1.8rem;">{fmt(title)}</div>
-            <div style="display:flex; gap:1.5rem; flex-wrap:wrap; justify-content:center;">{steps_html}</div>
-        </div></div>
-        ''',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="dj-footer">{fmt(FOOTER_TEXT)}</div>', unsafe_allow_html=True)
 
 
 def render_footer_band(wordmark: str, tagline: str, badges: list[dict]) -> None:
@@ -314,48 +302,8 @@ def render_footer_band(wordmark: str, tagline: str, badges: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 카드류
+# 대화 · 페이지 이동
 # ---------------------------------------------------------------------------
-
-def render_fraud_type_card(type_dict: dict, highlight: bool = False, anchor: str | None = None) -> None:
-    border = "3px solid var(--dj-primary)" if highlight else "1px solid var(--dj-border)"
-    if anchor:
-        st.markdown(f'<div id="{anchor}"></div>', unsafe_allow_html=True)
-    red_flags = "".join(f"<li>{fmt(rf)}</li>" for rf in type_dict["red_flags"])
-    actions = "".join(f"<li>{fmt(a)}</li>" for a in type_dict["actions"])
-    warning_html = f'<div style="margin-top:0.8rem; font-weight:600;">{fmt(type_dict["warning"])}</div>' if type_dict.get("warning") else ""
-    st.markdown(
-        f'''
-        <div class="dj-card dj-card-white" style="border: {border}; margin-bottom: 1rem;">
-            <div class="dj-headline" style="font-size:1.2rem;">{type_dict["icon"]} {fmt(type_dict["title"])}</div>
-            <p style="margin-top:0.5rem;"><strong>이런 상황이에요</strong><br>{fmt(type_dict["situation"])}</p>
-            <p><strong>이 말 나오면 100% 의심</strong></p>
-            <ul>{red_flags}</ul>
-            <p><strong>지금 할 일</strong></p>
-            <ol>{actions}</ol>
-            {warning_html}
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-
-
-def render_timeline(steps: list[dict]) -> None:
-    for step in steps:
-        st.markdown(
-            f'''
-            <div class="dj-timeline-item">
-                <div class="dj-timeline-dot" style="background:{step["color"]}"></div>
-                <div>
-                    <div style="font-weight:700;">{step["time"]} · {step["label"]}</div>
-                    <div style="margin-top:0.25rem;">{fmt(step["task"])}</div>
-                    <div style="margin-top:0.25rem; font-size:0.85rem; opacity:0.7;">왜 지금? {fmt(step["why"])}</div>
-                </div>
-            </div>
-            ''',
-            unsafe_allow_html=True,
-        )
-
 
 def render_chat_message(role: str, content: str) -> None:
     bubble_class = "user" if role == "user" else "assistant"
@@ -370,6 +318,10 @@ def queue_chat_prefill(text: str) -> None:
     st.session_state["prefill_chip"] = text
     st.switch_page("pages_files/chat.py")
 
+
+# ---------------------------------------------------------------------------
+# 마스코트
+# ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner=False)
 def _cutout_white_bg(path_str: str, mtime: float) -> bytes:
@@ -460,49 +412,3 @@ def render_mascot(width: int = 260, name: str = "mascot") -> None:
         else:
             st.markdown(f'<div style="font-size:{width * 0.55}px; line-height:1;">🛡️</div>', unsafe_allow_html=True)
 
-
-def render_quiz() -> None:
-    """금융사기 상식 퀴즈 (요즘 수법 페이지의 내부 탭에서 호출)."""
-    st.session_state.setdefault("quiz_best_score", None)
-    st.session_state.setdefault("quiz_attempts", 0)
-
-    st.caption("하루 3문제. 알고 있으면 안 당해요.")
-
-    with st.form("quiz_form"):
-        for i, q in enumerate(data.QUIZ_QUESTIONS):
-            st.markdown(f"**문제 {i + 1}.** {q['question']}")
-            st.radio("보기", q["options"], key=f"quiz_{i}", index=None, label_visibility="collapsed")
-        submitted = st.form_submit_button("도전! (1분이면 끝나요)")
-
-    if submitted:
-        score = 0
-        for i, q in enumerate(data.QUIZ_QUESTIONS):
-            chosen = st.session_state.get(f"quiz_{i}")
-            correct_text = q["options"][q["answer"]]
-            is_correct = chosen == correct_text
-            score += int(is_correct)
-            with st.expander(f'{"✅" if is_correct else "❌"} 문제 {i + 1} 해설', expanded=not is_correct):
-                st.markdown(fmt(q["explanation"]), unsafe_allow_html=True)
-
-        st.session_state.quiz_attempts += 1
-        st.session_state.quiz_last_score = score
-        if st.session_state.quiz_best_score is None or score > st.session_state.quiz_best_score:
-            st.session_state.quiz_best_score = score
-
-        band = next(b for b in data.QUIZ_RESULT_BANDS if b["min"] <= score <= b["max"])
-        st.markdown(
-            f'''
-            <div class="dj-card dj-card-coral" style="text-align:center; margin-top:1rem;">
-                <div style="font-size:1.5rem; font-weight:700;">{band["badge"]}</div>
-                <div style="margin-top:0.4rem;">{score}/{len(data.QUIZ_QUESTIONS)} · {band["message"]}</div>
-            </div>
-            ''',
-            unsafe_allow_html=True,
-        )
-        share_col, ask_col = st.columns(2)
-        with share_col:
-            if st.button(data.QUIZ_SHARE_LABEL, use_container_width=True):
-                st.toast("공유 링크를 복사했어요! (데모)")
-        with ask_col:
-            if st.button("혹시 지금 겪고 있는 일이 있어요? 바로 물어보기 →", use_container_width=True):
-                st.switch_page("pages_files/chat.py")

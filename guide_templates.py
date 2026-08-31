@@ -2,7 +2,7 @@
 
 전기통신금융사기 통합신고센터(counterscam112.go.kr) '상황별 조치방법'의
 공식 안내를 기반으로 한 실제 대응 지침이다. 예시(mock) 데이터가 아니므로
-배포 시에도 유지된다. mock_data.py 와 분리해 둔다.
+배포 시에도 유지된다. 화면 카피(content.py)와는 분리해 둔다.
 
 services.py 의 make_guide() 가 GUIDE_TEMPLATES[key] 로 이 값을 참조한다.
 services.classify_damage_stage() 는 한국어 stage 값(접촉초기 / 개인정보제공 /
