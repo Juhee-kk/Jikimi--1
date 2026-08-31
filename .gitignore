@@ -3,3 +3,13 @@ __pycache__/
 .streamlit/secrets.toml
 .DS_Store
 .env
+
+# 프롬프트·검색 실험용. 로컬에서만 돌린다.
+tests/
+
+# restructure가 남기는 교체 전 사본. 로컬 복구용이라 저장소에는 올리지 않는다.
+data/backup/
+
+# 작업 도중 파일. 정상 종료하면 남지 않는다.
+data/*.tmp
+data/*.restructure.jsonl
