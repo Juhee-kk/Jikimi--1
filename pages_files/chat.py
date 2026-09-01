@@ -55,7 +55,25 @@ import streamlit as st
 
 import content
 import services
-from components import render_chat_message
+from components import fmt, render_chat_message
+
+st.markdown(
+    """
+    <style>
+      .dj-conn { display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; align-items: center;
+                 font-size: 0.78rem; color: var(--dj-muted, #6b7280); margin: -0.2rem 0 0.2rem; }
+      .dj-conn-title { font-weight: 700; letter-spacing: 0.01em; }
+      .dj-conn-item { display: inline-flex; align-items: center; gap: 0.32rem; }
+      .dj-conn-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+      .dj-conn-dot.ok { background: #22a06b; }
+      .dj-conn-dot.fail { background: #e0533d; }
+      .dj-conn-state { font-weight: 700; color: var(--dj-text, #1f2937); }
+      .dj-conn-detail { font-size: 0.72rem; color: #e0533d; margin: 0 0 0.4rem; word-break: break-all; }
+      div.st-key-conn_refresh button { padding: 0.1rem 0.5rem; min-height: 0; font-size: 0.72rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 CALL_SCRIPT_LABEL = "📞 신고 전화 대본"
 
@@ -330,6 +348,51 @@ def handle_uploaded_files(files) -> None:
         reply(reply_text, kind="ask")
 
 
+# 사례 DB(Qdrant)와 LLM(Upstage)에 실제로 한 번씩 찔러 보는 점검이라 값이 든다.
+# 5분 캐시로 묶어 매 턴 다시 걸리지 않게 하고, 새로고침은 '다시 확인' 버튼으로만 한다.
+@st.cache_data(ttl=300, show_spinner=False)
+def _connection_status() -> list[dict]:
+    db_ok, db_detail = services.check_case_db()
+    llm_ok, llm_detail = services.check_llm()
+    return [
+        {"label": content.CONNECTION_STATUS_DB_LABEL, "ok": db_ok, "detail": db_detail},
+        {"label": content.CONNECTION_STATUS_LLM_LABEL, "ok": llm_ok, "detail": llm_detail},
+    ]
+
+
+def render_connection_status() -> None:
+    """헤더 아래 한 줄짜리 연결 상태. 끊긴 항목이 있을 때만 원인을 덧붙인다."""
+    rows = _connection_status()
+    items = "".join(
+        '<span class="dj-conn-item">'
+        f'<span class="dj-conn-dot {"ok" if row["ok"] else "fail"}"></span>'
+        f'{fmt(row["label"])} '
+        f'<span class="dj-conn-state">'
+        f'{content.CONNECTION_STATUS_OK if row["ok"] else content.CONNECTION_STATUS_FAIL}'
+        "</span></span>"
+        for row in rows
+    )
+    st.markdown(
+        f'<div class="dj-conn"><span class="dj-conn-title">'
+        f"{fmt(content.CONNECTION_STATUS_TITLE)}</span>{items}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # 실패 사유는 예외 문구 그대로다. 배포 로그를 열지 않고 화면에서 원인을 보려는 것이 목적.
+    for row in rows:
+        if not row["ok"]:
+            st.markdown(
+                f'<div class="dj-conn-detail">↳ {fmt(row["label"])}: {fmt(row["detail"])}</div>',
+                unsafe_allow_html=True,
+            )
+
+    refresh_col, _ = st.columns([1, 5])
+    with refresh_col:
+        if st.button(content.CONNECTION_STATUS_REFRESH, key="conn_refresh", use_container_width=True):
+            _connection_status.clear()
+            st.rerun()
+
+
 # --- 화면 ------------------------------------------------------------------
 
 header_col, reset_col = st.columns([5, 1])
@@ -339,6 +402,8 @@ with reset_col:
     if st.button("🔄 새 상담", use_container_width=True):
         _reset_state()
         st.rerun()
+
+render_connection_status()
 
 # 홈/뉴스 카드에서 넘어온 프리필
 if st.session_state.get("prefill_chip"):

@@ -918,3 +918,56 @@ def make_agency_inquiry_script(structured: dict) -> tuple[str, str]:
         other_routes=other_routes,
     )
     return guide, script
+
+
+# ---------------------------------------------------------------------------
+# 연결 점검 (화면 하단 상태 표시용)
+# ---------------------------------------------------------------------------
+#
+# 배포본에서 답이 안 나올 때 원인이 둘 중 하나다 — 사례 DB(Qdrant)에 못 닿거나,
+# LLM(Upstage) 키가 없거나 죽었거나. 화면에서 바로 가려내려고 둔 점검이다.
+# 키 유무만 보면 "키는 있는데 안 되는" 경우를 못 잡으므로 실제로 한 번 찔러 본다.
+# 대신 값이 가장 싼 호출만 쓴다 — Qdrant는 컬렉션 정보 조회, LLM은 1토큰 생성.
+
+
+def _one_line(exc: Exception) -> str:
+    """예외를 화면 한 줄에 맞게 줄인다. 원문 줄바꿈이 그대로 나가면 표시줄이 무너진다."""
+    return " ".join(f"{type(exc).__name__}: {exc}".split())[:120]
+
+
+def check_case_db() -> tuple[bool, str]:
+    """사례 DB에 실제로 닿는지 본다. (정상 여부, 한 줄 설명)"""
+    if not get_secret("QDRANT_API_KEY"):
+        return False, "QDRANT_API_KEY 없음"
+    try:
+        from qdrant_client import QdrantClient
+
+        info = QdrantClient(
+            url=pipeline.QDRANT_URL, api_key=get_secret("QDRANT_API_KEY"), timeout=10
+        ).get_collection(pipeline.QDRANT_COLLECTION)
+    except Exception as exc:  # 연결·인증·컬렉션 없음을 한데 묶어 화면에 그대로 보인다
+        return False, _one_line(exc)
+    count = getattr(info, "points_count", None)
+    return True, f"{pipeline.QDRANT_COLLECTION} · 사례 {count if count is not None else '?'}건"
+
+
+def check_llm() -> tuple[bool, str]:
+    """LLM API가 응답하는지 본다. (정상 여부, 한 줄 설명)"""
+    try:
+        _api_key()
+    except MissingUpstageAPIError:
+        return False, "UPSTAGE_API 키 없음"
+    try:
+        _post(
+            UPSTAGE_CHAT_URL,
+            {
+                "model": STRUCTURING_MODEL,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+            },
+            timeout=10,
+            retries=1,
+        )
+    except Exception as exc:
+        return False, _one_line(exc)
+    return True, f"{STRUCTURING_MODEL} / {MODEL}"

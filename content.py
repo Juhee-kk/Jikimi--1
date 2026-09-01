@@ -122,6 +122,15 @@ CHAT_OPENING_MESSAGE = (
 
 CHAT_INPUT_PLACEHOLDER = "예) 아까 검찰이라면서 전화 왔는데 안전계좌로 옮기라고 해요…"
 
+# 연결 상태 표시줄. 배포본에서 답이 비었을 때 원인이 사례 DB 쪽인지 LLM 쪽인지
+# 사용자가(그리고 시연 중인 우리가) 화면에서 바로 가르라고 둔 줄이다.
+CONNECTION_STATUS_TITLE = "연결 상태"
+CONNECTION_STATUS_DB_LABEL = "사례DB 연결"
+CONNECTION_STATUS_LLM_LABEL = "LLM 연결"
+CONNECTION_STATUS_OK = "정상"
+CONNECTION_STATUS_FAIL = "끊김"
+CONNECTION_STATUS_REFRESH = "다시 확인"
+
 SENSITIVE_INFO_WARNING = (
     "앗, 잠깐만요. **주민등록번호·비밀번호·인증번호는 저한테도 알려주지 마세요.**\n"
     "그거 없어도 판단할 수 있어요. 그리고 누가 그걸 요구했다면, 그것 자체가 이미 큰 신호예요."
