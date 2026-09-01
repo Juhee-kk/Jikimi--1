@@ -63,6 +63,7 @@ import json
 import re
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
@@ -406,6 +407,36 @@ def dedupe_cases(cases: list[dict], limit: int) -> list[dict]:
     return kept
 
 
+# Streamlit Secrets 에 붙여넣은 값은 따옴표·공백·줄바꿈이 섞여 오는 일이 잦다.
+# 그대로 QdrantClient 에 넘기면 httpx 가 호스트를 idna 로 인코딩하다 터지는데,
+# 그 예외("label too long")만 봐서는 원인이 주소라는 걸 알 수 없다. 여기서 한 번
+# 다듬고, 검색(recall_cases)과 점검(check_case_db)이 같은 값을 쓰게 한다.
+def qdrant_url() -> str:
+    raw = (get_secret("QDRANT_URL") or pipeline.QDRANT_URL or "").strip()
+    raw = raw.strip('"').strip("'").strip()
+    if raw and "://" not in raw:
+        raw = "https://" + raw
+    return raw.rstrip("/")
+
+
+def _mask_host(host: str) -> str:
+    """호스트를 화면에 보일 때 쓰는 요약. 정상 주소는 그대로 나오고, 주소 자리에
+    API 키가 섞여 들어온 경우처럼 비정상적으로 긴 라벨만 길이로 가린다.
+    배포본 화면은 누구나 볼 수 있으므로 키가 그대로 노출되면 안 된다."""
+    return ".".join(part if len(part) <= 40 else f"…({len(part)}자)" for part in host.split("."))
+
+
+def check_qdrant_url() -> tuple[bool, str]:
+    """주소 자체가 성립하는지 먼저 본다. (정상 여부, 호스트 요약 또는 사유)"""
+    host = urlsplit(qdrant_url()).hostname or ""
+    if not host:
+        return False, "QDRANT_URL 이 비어 있거나 주소 형식이 아님"
+    # DNS 라벨은 63자를 넘을 수 없다. 넘으면 연결을 걸어 보나 마나 idna 에서 막힌다.
+    if any(len(part) > 63 for part in host.split(".")):
+        return False, f"QDRANT_URL 호스트가 올바르지 않음 — {_mask_host(host)}"
+    return True, _mask_host(host)
+
+
 def recall_cases(structured: dict, limit: int = RECALL_TOP_N) -> list[dict]:
     """Qdrant에서 후보를 건진다. 색인은 넓게 두고 거르는 건 여기 query_filter로 한다."""
     from qdrant_client import QdrantClient
@@ -415,7 +446,7 @@ def recall_cases(structured: dict, limit: int = RECALL_TOP_N) -> list[dict]:
     if not api_key:
         return []
 
-    client = QdrantClient(url=pipeline.QDRANT_URL, api_key=api_key, timeout=20)
+    client = QdrantClient(url=qdrant_url(), api_key=api_key, timeout=20)
     hits = client.query_points(
         collection_name=pipeline.QDRANT_COLLECTION,
         query=_embed_query(query_text(structured)),
@@ -939,14 +970,18 @@ def check_case_db() -> tuple[bool, str]:
     """사례 DB에 실제로 닿는지 본다. (정상 여부, 한 줄 설명)"""
     if not get_secret("QDRANT_API_KEY"):
         return False, "QDRANT_API_KEY 없음"
+    url_ok, host = check_qdrant_url()
+    if not url_ok:
+        return False, host
     try:
         from qdrant_client import QdrantClient
 
         info = QdrantClient(
-            url=pipeline.QDRANT_URL, api_key=get_secret("QDRANT_API_KEY"), timeout=10
+            url=qdrant_url(), api_key=get_secret("QDRANT_API_KEY"), timeout=10
         ).get_collection(pipeline.QDRANT_COLLECTION)
     except Exception as exc:  # 연결·인증·컬렉션 없음을 한데 묶어 화면에 그대로 보인다
-        return False, _one_line(exc)
+        # 어느 주소로 걸었는지 함께 보인다. 사유만으로는 Secrets 를 고칠 수 없다.
+        return False, f"{host} · {_one_line(exc)}"
     count = getattr(info, "points_count", None)
     return True, f"{pipeline.QDRANT_COLLECTION} · 사례 {count if count is not None else '?'}건"
 
