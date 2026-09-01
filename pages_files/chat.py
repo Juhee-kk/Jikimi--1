@@ -113,8 +113,23 @@ if "chat_phase" not in st.session_state:
 
 
 def _history() -> list[dict]:
-    """대화 전체. 가이드·도구·단계 분류가 맥락으로 쓴다."""
+    """대화 전체. 도구 3종이 맥락으로 쓴다. 가이드 도입부는 _guide_history 를 쓴다."""
     return [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_messages]
+
+
+def _guide_history() -> list[dict]:
+    """가이드 도입부에 넘길 대화. 되묻기 발화를 뺀다.
+
+    도입부는 대화의 종착점이라 질문이 섞이면 안 된다. 그런데 기록을 그대로 주면
+    모델이 직전 되묻기(ask_for)의 머리말과 불릿 형식을 따라 해 답할 수 없는 질문을
+    붙인다. 되묻기는 상담봇이 던진 질문일 뿐 사실이 들어 있지 않으므로, 공감 문장을
+    쓰는 데 필요하지 않다. 사실은 사용자 발화에 있다.
+    """
+    return [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.chat_messages
+        if m.get("kind") != "ask"
+    ]
 
 
 def _structuring_history() -> list[dict]:
@@ -188,7 +203,7 @@ def go_to_stage_check() -> None:
 def go_to_guide() -> None:
     """⑤ 확정된 피해 단계의 가이드를 낸다."""
     st.session_state.chat_phase = "guided"
-    reply(services.make_guide(st.session_state.damage_stage, _history()))
+    reply(services.make_guide(st.session_state.damage_stage, _guide_history()))
 
 
 def revise_stage_check() -> None:

@@ -732,7 +732,49 @@ GUIDE_INTRO_SYSTEM = """사용자의 상황에 공감하는 문장 1~2개를 한
 - 사용자를 탓하지 말 것. "당황스러우셨겠어요" 같은 톤
 - 사기 확정 단정 금지. "위험 신호가 보여요" 수준까지만
 - 이어서 구체적 행동 안내가 나올 것이므로, 행동 지시는 쓰지 말 것
-- 2문장 이내, 순수 텍스트만"""
+- 사용자에게 되묻지 마라. 질문은 한 줄도 쓰지 마라. 이 화면 다음에는 답을 받을
+  곳이 없다. 대화 기록에 빠진 정보가 있어도 그 상태로 쓴다.
+- 대화 기록에 있는 되묻기 형식(머리말 + 불릿 질문 목록)을 따라 하지 마라.
+- 목록·불릿·번호 없이, 2문장 이내 순수 텍스트만"""
+
+
+# 도입부에서 질문이 새어 나갔을 때 대신 쓸 문장. 걷어내고 나면 아무것도 안 남는
+# 경우가 있는데, 종결 메시지가 고정 가이드로 시작하면 너무 차갑다.
+GUIDE_INTRO_FALLBACK = "많이 놀라셨을 것 같아요. 지금 상황에서 할 수 있는 일부터 하나씩 짚어드릴게요."
+
+_LIST_LINE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s")
+
+# 물음표 없이 답을 요구하는 표현. 되묻기 머리말(ASK_HEAD_*)이 딱 이 꼴이라,
+# 물음표와 불릿만 걸러서는 "조금만 더 알려주시면…" 한 줄이 그대로 살아남는다.
+_ASK_PHRASES = (
+    "알려주시", "알려 주시", "말씀해 주", "말씀해주", "답해 주", "답해주",
+    "확인해 주시면", "확인해주시면", "해당 없는", "여쭤",
+)
+
+
+def strip_questions(text: str) -> str:
+    """도입부에서 되묻는 줄과 목록을 걷어낸다. 비면 GUIDE_INTRO_FALLBACK 을 쓴다.
+
+    프롬프트로 금지해도 모델이 대화 기록에 있는 되묻기 형식을 따라 하는 일이 남는다.
+    이 메시지 다음에는 답을 받을 곳이 없다 — chat.py 가 chat_phase 를 guided 로
+    잠그고, 이후 사용자 입력에는 상담 종료 안내만 돌려준다. 질문이 한 줄이라도
+    새어 나가면 사용자는 답할 수 없는 질문을 받고 무시당한다.
+
+    거르는 것은 세 가지 — 불릿·번호 목록, 물음표가 있는 줄, 그리고 물음표 없이
+    답을 요구하는 줄(_ASK_PHRASES). 셋을 다 봐야 하는 이유는 되묻기가 '머리말 한 줄 +
+    불릿 질문들' 구조라서, 불릿만 지우면 요구하는 머리말이 남기 때문이다.
+
+    수사적 질문("얼마나 놀라셨을까요?")이나 "말씀해 주셔서 고마워요" 같은 문장까지
+    함께 지워지는 것은 감수한다. 종결 화면에서는 답을 기대하게 만드는 문장 자체가
+    문제라, 구분해 살릴 이유가 없다.
+    """
+    kept = [
+        line for line in text.splitlines()
+        if not _LIST_LINE.match(line)
+        and "?" not in line and "?" not in line
+        and not any(phrase in line for phrase in _ASK_PHRASES)
+    ]
+    return "\n".join(kept).strip() or GUIDE_INTRO_FALLBACK
 
 
 def make_guide(stage: str, chat_messages: list[dict]) -> str:
@@ -744,6 +786,11 @@ def make_guide(stage: str, chat_messages: list[dict]) -> str:
     마무리(resolve_closing)까지 여기서 붙이는 것은, 이 메시지가 대화의 종착점이기
     때문이다. 화면 아래 버튼 3개만 덩그러니 두면 무엇부터 눌러야 할지 알 수 없다.
     쓰는 순서가 단계마다 갈리므로 마무리도 단계별로 다르다.
+
+    종착점이라서 도입부에 질문이 섞이면 안 된다. 세 겹으로 막는다 — 호출부가 되묻기
+    발화를 뺀 기록을 주고(chat.py 의 _guide_history), 프롬프트가 질문을 금지하고,
+    strip_questions 가 그래도 새어 나온 줄을 걷어낸다. 기록을 자료로 넘기는 것만으로는
+    부족했다. 대화를 이어쓰는 것은 막아도, 기록 안에 든 되묻기 형식의 모방은 막지 못한다.
     """
     intro = call_llm(
         GUIDE_INTRO_SYSTEM,
@@ -751,7 +798,7 @@ def make_guide(stage: str, chat_messages: list[dict]) -> str:
         temperature=0.7,
     )
     return "\n\n".join([
-        intro.strip(),
+        strip_questions(intro.strip()),
         guide_templates.resolve(stage),
         guide_templates.resolve_closing(stage),
     ])
