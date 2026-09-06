@@ -1,14 +1,13 @@
 """홈 화면. 서비스 소개와 상황 진단 탭으로의 진입점만 담당한다.
 
 문구는 전부 content.py 에 있고 여기에는 레이아웃만 둔다.
-히어로 CTA 와 진입 카드 4개가 상황 진단 탭으로 넘어가는 두 갈래 입구다.
-카드는 눌린 카드의 chip 문구를 챗봇 첫 발화로 넘긴다(요즘 수법 탭 카드와 같은 방식).
+챗봇 진입은 히어로 CTA 하나로 모으고, 진입 카드 4개는 상황 예시를 보여주는 역할만 한다.
 """
 
 import streamlit as st
 
 import content
-from components import fmt, queue_chat_prefill, render_footer_band, render_mascot
+from components import fmt, render_footer_band, render_mascot
 
 # --- 히어로 (풀블리드 코랄) ---
 hero = content.HERO_COPY
@@ -40,7 +39,7 @@ st.markdown(
 
 st.markdown("<div style='height:1.8rem'></div>", unsafe_allow_html=True)
 
-# --- 이럴 때 열어보세요 (진입 카드 4개) ---
+# --- 이럴 때 열어보세요 (상황 예시 카드 4개, 클릭 없음) ---
 card_cols = st.columns(4)
 for i, (col, card) in enumerate(zip(card_cols, content.ENTRY_CARDS)):
     with col, st.container(key=f"entry_card_{i}"):
@@ -54,8 +53,6 @@ for i, (col, card) in enumerate(zip(card_cols, content.ENTRY_CARDS)):
             ''',
             unsafe_allow_html=True,
         )
-        if st.button("이 상황이에요 →", key=f"entry_card_cta_{i}", use_container_width=True):
-            queue_chat_prefill(card["chip"])
 
 st.markdown("<div style='height:2.2rem'></div>", unsafe_allow_html=True)
 

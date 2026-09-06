@@ -43,7 +43,7 @@ Layered so that the page files hold layout only:
   used by exactly one page live in that page's file (e.g. `render_quiz`, `render_new_scam_card` in
   `news.py`).
 - **`components.py`** — only what crosses pages: the global stylesheet, top nav, footer, chat bubbles,
-  the mascot renderer, and `queue_chat_prefill()` (the 홈/뉴스 → 챗 handoff via
+  the mascot renderer, and `queue_chat_prefill()` (the 뉴스 → 챗 handoff via
   `st.session_state["prefill_chip"]`).
 - **`content.py`** — every user-visible string, grouped by screen (공통 / 홈 / 상황 진단 / 요즘 수법),
   plus `FRAUD_TYPES` (the 8 fixed scam types, whose `id`s match `data/taxonomy/scam_taxonomy.json` and

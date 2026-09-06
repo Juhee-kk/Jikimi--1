@@ -162,14 +162,9 @@ def inject_custom_css() -> None:
         /* 푸터 밴드 (코랄, 상단 라운드) */
         .dj-full-bleed.dj-footer-band { background: var(--dj-primary); color: var(--dj-white); border-radius: 56px 56px 0 0; margin-top: 2.5rem; padding-top: 3rem; }
 
-        /* 홈 — 진입 카드 4개 (카드 + 하단 CTA 버튼 높이 맞춤) */
+        /* 홈 — 상황 예시 카드 4개 (카드 높이 맞춤) */
         div[class*="st-key-entry_card_"] { display: flex; flex-direction: column; height: 100%; }
         div[class*="st-key-entry_card_"] .dj-card { flex: 1; min-height: 158px; }
-        div[class*="st-key-entry_card_"] .stButton { margin-top: 0.5rem; }
-        div[class*="st-key-entry_card_"] .stButton > button {
-            background: var(--dj-white); border: 1px solid var(--dj-border);
-            font-size: 0.82rem; height: 40px;
-        }
 
         /* 요즘 수법 — 카드뉴스 */
         div[class*="st-key-news_card_"] { display: flex; flex-direction: column; height: 100%; margin-bottom: 1rem; }
